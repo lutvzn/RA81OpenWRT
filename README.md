@@ -74,6 +74,15 @@ SRC=/path/to/tree DL_DIR=/path/to/dl scripts/build.sh   # other source / downloa
 `configs/ra81.config` selects the device, LuCI and the initramfs image. Edit it to
 add packages.
 
+### Building on GitHub Actions
+
+If you fork or push this repository to GitHub, go to **Actions → Build firmware → Run
+workflow**. Choose the variant (`generic`, `files-ap` or `both`). The job runs
+`scripts/build.sh` on an Ubuntu 24.04 runner, then runs `tools/validate-images.sh` and
+`tools/test-dualboot.sh`, and uploads the `out/` directory as an artifact (images +
+`sha256sums`). A cold build takes about 1.5–2.5 hours on a standard runner. Downloaded
+sources are cached between runs.
+
 ### Access-point profile (example)
 
 `configs/files-ap` is an example first-boot overlay that turns the router into a plain
@@ -185,6 +194,7 @@ configs/            ra81.config (diffconfig) and files-ap (example overlay)
 scripts/build.sh    reproducible build
 scripts/ra81-install-slot.sh   installer for the inactive slot (runs on the router)
 tools/              BDF tools, image validator, dual-boot simulation, U-Boot xref helper
+.github/workflows/  manual GitHub Actions build (workflow_dispatch)
 firmware/bdf/       Wi-Fi board data files (see firmware/bdf/README.md)
 CLAUDE.md           detailed development notes: findings, decisions, test results
 ```

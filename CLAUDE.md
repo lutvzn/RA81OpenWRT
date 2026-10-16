@@ -22,6 +22,7 @@ unless marked otherwise.
 | `tools/bd-*.py` | board-2.bin list/extract/encode (encoder is byte-identical to ath11k-bdencoder) | yes |
 | `tools/uboot-xref.py` | Thumb-2 disassembly around string xrefs in the U-Boot ELF | yes |
 | `tools/validate-images.sh` | static checks of the outputs (UBI volumes, FIT config/arch, DTB, rootfs, sysupgrade tar) | yes |
+| `.github/workflows/build.yml` | manual GitHub Actions build (variant: generic / files-ap / both), validates, uploads `out/` | yes |
 | `tools/test-dualboot.sh` | runs the shipped dual-boot library against a modelled U-Boot (7 scenarios) | yes |
 | `build/openwrt` | git worktree of `openwrt/` on branch `ra81-25.12` (dev tree) | no |
 | `build/stockfw` | stock RA81 1.0.33 firmware + extracted rootfs | no |
