@@ -1,0 +1,18 @@
+# Third-party reference clones (see CLAUDE.md for their origins)
+/openwrt/
+/openwrt-redmi-ax3000/
+/Redmi_AX3000_immortalwrt/
+/redmi-ax3000-ra81-openwrt-toolkit/
+/xmir-patcher/
+
+# Build tree, downloads, stock firmware extraction, python venv
+/build/
+
+# Device-specific and sensitive data: full flash backup (contains the
+# calibration data, MACs and Xiaomi keys of this unit) and live dumps
+# (contain Wi-Fi credentials and U-Boot env secrets). Never publish.
+/ra81-backup/
+/hwinfo/
+
+# Build outputs copied out of the tree
+/out/

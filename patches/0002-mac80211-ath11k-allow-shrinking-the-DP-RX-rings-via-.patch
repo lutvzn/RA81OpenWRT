@@ -1,0 +1,129 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: lutvzn <106083845+lutvzn@users.noreply.github.com>
+Date: Thu, 15 Oct 2026 21:27:18 -0300
+Subject: [PATCH 2/3] mac80211: ath11k: allow shrinking the DP RX rings via DT
+
+ath11k fills the RXDMA buffer ring (4096 entries), on rxdma1 chips also
+the monitor buffer ring (4096 entries), and 1024 monitor status buffers
+with 2 KiB buffers per radio at probe time. On IPQ5018 + QCN6122 boards
+with 256 MiB of RAM that is ~25 MiB per radio before any interface is up.
+
+Add optional qcom,ath11k-{rx-buf,mon-buf,mon-status}-ring-size DT
+properties. Boards without them keep the current defaults.
+---
+ ...k-allow-shrinking-DP-RX-rings-via-DT.patch | 103 ++++++++++++++++++
+ 1 file changed, 103 insertions(+)
+ create mode 100644 package/kernel/mac80211/patches/ath11k/990-wifi-ath11k-allow-shrinking-DP-RX-rings-via-DT.patch
+
+diff --git a/package/kernel/mac80211/patches/ath11k/990-wifi-ath11k-allow-shrinking-DP-RX-rings-via-DT.patch b/package/kernel/mac80211/patches/ath11k/990-wifi-ath11k-allow-shrinking-DP-RX-rings-via-DT.patch
+new file mode 100644
+index 0000000000..bd770118c1
+--- /dev/null
++++ b/package/kernel/mac80211/patches/ath11k/990-wifi-ath11k-allow-shrinking-DP-RX-rings-via-DT.patch
+@@ -0,0 +1,103 @@
++From: lutvzn <106083845+lutvzn@users.noreply.github.com>
++Subject: [PATCH] wifi: ath11k: allow shrinking the DP RX rings via DT
++
++At probe time ath11k fills the RXDMA buffer ring (4096 entries) and, on
++chips with rxdma1 (IPQ8074/IPQ6018/IPQ5018/QCN6122), also the monitor
++buffer ring (4096 entries) with 2 KiB buffers, plus 1024 monitor status
++buffers per radio. On an IPQ5018 + QCN6122 board that is ~25 MiB of RAM
++per radio before any interface is up, too much for 256 MiB boards.
++
++Add optional DT properties to size these rings per board:
++  qcom,ath11k-rx-buf-ring-size
++  qcom,ath11k-mon-buf-ring-size     (also monitor dst/desc rings)
++  qcom,ath11k-mon-status-ring-size
++Boards without them keep the current defaults.
++
++--- a/drivers/net/wireless/ath/ath11k/core.c
+++++ b/drivers/net/wireless/ath/ath11k/core.c
++@@ -2679,8 +2679,27 @@ static int ath11k_init_hw_params(struct
++ 			ath11k_info(ab, "Unsupported FW memory mode: %u\n", fw_mem_mode);
++ 	}
++ 
+++	/*
+++	 * Boards with little RAM can shrink the host RX rings, which are
+++	 * filled with 2 KiB buffers at probe time. The monitor buffer size
+++	 * also sizes the monitor destination and descriptor rings.
+++	 */
+++	of_property_read_u32(ab->dev->of_node, "qcom,ath11k-rx-buf-ring-size",
+++			     &ab->hw_params.dp_rx_buf_ring_size);
+++	of_property_read_u32(ab->dev->of_node, "qcom,ath11k-mon-buf-ring-size",
+++			     &ab->hw_params.dp_mon_buf_ring_size);
+++	of_property_read_u32(ab->dev->of_node, "qcom,ath11k-mon-status-ring-size",
+++			     &ab->hw_params.dp_mon_status_ring_size);
+++
++ 	ath11k_info(ab, "%s\n", ab->hw_params.name);
++ 	ath11k_info(ab, "FW memory mode: %d\n", ab->hw_params.fw_mem_mode);
+++	if (ab->hw_params.dp_rx_buf_ring_size ||
+++	    ab->hw_params.dp_mon_buf_ring_size ||
+++	    ab->hw_params.dp_mon_status_ring_size)
+++		ath11k_info(ab, "DP ring sizes: rx buf %u mon buf %u mon status %u\n",
+++			    ab->hw_params.dp_rx_buf_ring_size ?: DP_RXDMA_BUF_RING_SIZE,
+++			    ab->hw_params.dp_mon_buf_ring_size ?: DP_RXDMA_MONITOR_BUF_RING_SIZE,
+++			    ab->hw_params.dp_mon_status_ring_size ?: DP_RXDMA_MON_STATUS_RING_SIZE);
++ 
++ 	return 0;
++ }
++--- a/drivers/net/wireless/ath/ath11k/dp_rx.c
+++++ b/drivers/net/wireless/ath/ath11k/dp_rx.c
++@@ -578,7 +578,9 @@ static int ath11k_dp_rx_pdev_srng_alloc(
++ 	ret = ath11k_dp_srng_setup(ar->ab,
++ 				   &dp->rx_refill_buf_ring.refill_buf_ring,
++ 				   HAL_RXDMA_BUF, 0,
++-				   dp->mac_id, DP_RXDMA_BUF_RING_SIZE);
+++				   dp->mac_id,
+++				   ab->hw_params.dp_rx_buf_ring_size ?:
+++				   DP_RXDMA_BUF_RING_SIZE);
++ 	if (ret) {
++ 		ath11k_warn(ar->ab, "failed to setup rx_refill_buf_ring\n");
++ 		return ret;
++@@ -613,6 +615,7 @@ static int ath11k_dp_rx_pdev_srng_alloc(
++ 		ret = ath11k_dp_srng_setup(ar->ab,
++ 					   srng,
++ 					   HAL_RXDMA_MONITOR_STATUS, 0, dp->mac_id + i,
+++					   ab->hw_params.dp_mon_status_ring_size ?:
++ 					   DP_RXDMA_MON_STATUS_RING_SIZE);
++ 		if (ret) {
++ 			ath11k_warn(ar->ab,
++@@ -636,6 +639,7 @@ static int ath11k_dp_rx_pdev_srng_alloc(
++ 	ret = ath11k_dp_srng_setup(ar->ab,
++ 				   &dp->rxdma_mon_buf_ring.refill_buf_ring,
++ 				   HAL_RXDMA_MONITOR_BUF, 0, dp->mac_id,
+++				   ab->hw_params.dp_mon_buf_ring_size ?:
++ 				   DP_RXDMA_MONITOR_BUF_RING_SIZE);
++ 	if (ret) {
++ 		ath11k_warn(ar->ab,
++@@ -645,6 +649,7 @@ static int ath11k_dp_rx_pdev_srng_alloc(
++ 
++ 	ret = ath11k_dp_srng_setup(ar->ab, &dp->rxdma_mon_dst_ring,
++ 				   HAL_RXDMA_MONITOR_DST, 0, dp->mac_id,
+++				   ab->hw_params.dp_mon_buf_ring_size ?:
++ 				   DP_RXDMA_MONITOR_DST_RING_SIZE);
++ 	if (ret) {
++ 		ath11k_warn(ar->ab,
++@@ -654,6 +659,7 @@ static int ath11k_dp_rx_pdev_srng_alloc(
++ 
++ 	ret = ath11k_dp_srng_setup(ar->ab, &dp->rxdma_mon_desc_ring,
++ 				   HAL_RXDMA_MONITOR_DESC, 0, dp->mac_id,
+++				   ab->hw_params.dp_mon_buf_ring_size ?:
++ 				   DP_RXDMA_MONITOR_DESC_RING_SIZE);
++ 	if (ret) {
++ 		ath11k_warn(ar->ab,
++--- a/drivers/net/wireless/ath/ath11k/hw.h
+++++ b/drivers/net/wireless/ath/ath11k/hw.h
++@@ -198,6 +198,10 @@ struct ath11k_hw_params {
++ 	int fw_mem_mode;
++ 	u32 num_vdevs;
++ 	u32 num_peers;
+++	/* DP RX ring sizes, 0 = driver default (see dp.h) */
+++	u32 dp_rx_buf_ring_size;
+++	u32 dp_mon_buf_ring_size;
+++	u32 dp_mon_status_ring_size;
++ 	bool supports_suspend;
++ 	u32 hal_desc_sz;
++ 	bool supports_regdb;
+-- 
+2.52.0
+
