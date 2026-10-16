@@ -11,6 +11,10 @@ on:
           - files-ap
           - both
         default: generic
+      release:
+        description: "Publish the images as a GitHub Release"
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -74,5 +78,77 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ra81-openwrt-${{ matrix.variant }}-${{ github.sha }}
-          path: out/*/
+          path: out/
           if-no-files-found: error
+
+  release:
+    name: Publish release
+    needs: build
+    if: inputs.release
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Download images
+        uses: actions/download-artifact@v4
+        with:
+          pattern: ra81-openwrt-*-${{ github.sha }}
+          path: artifacts
+
+      - name: Collect release assets
+        id: assets
+        run: |
+          mkdir -p release
+          for dir in artifacts/*/*/; do
+            variant=generic
+            case "$dir" in *-files-ap/) variant=files-ap ;; esac
+            for f in "$dir"*xiaomi_redmi-ax3000*; do
+              name=$(basename "$f")
+              [ "$variant" = generic ] || name=${name/xiaomi_redmi-ax3000/xiaomi_redmi-ax3000-$variant}
+              cp "$f" "release/$name"
+            done
+          done
+          (cd release && sha256sum -- ./* | sed 's# \./# #') > sha256sums
+          mv sha256sums release/
+          cat release/sha256sums
+          # Output dir name, e.g. v25.12.5-r33051-f5dae5ece4[-files-ap]
+          dirs=(artifacts/*/*/)
+          version=$(basename "${dirs[0]}")
+          version=${version%-files-ap}
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=ra81-$version-run${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.assets.outputs.tag }}
+          VERSION: ${{ steps.assets.outputs.version }}
+        run: |
+          {
+            echo "OpenWrt $VERSION for the Xiaomi Redmi AX3000 (RA81), built from ${GITHUB_SHA::7}."
+            echo
+            echo "Patches:"
+            for p in patches/*.patch; do echo "- \`$(basename "$p")\`"; done
+            echo
+            echo "| File | Use |"
+            echo "|---|---|"
+            echo "| \`*-squashfs-factory.ubi\` | first install into a dual-boot slot (\`scripts/ra81-install-slot.sh\`) |"
+            echo "| \`*-squashfs-sysupgrade.bin\` | upgrade from this firmware (\`sysupgrade\`) |"
+            echo "| \`*-initramfs-uImage.itb\` | RAM boot via U-Boot TFTP (UART) |"
+            echo
+            echo "Files with \`-files-ap\` in the name contain the example access-point overlay"
+            echo "(\`configs/files-ap\`: 10.0.0.3/23, no DHCP server) — only for networks that match it."
+            echo
+            echo "**Only for the RA81.** Read the README (install, recovery, limitations) before flashing."
+            echo
+            echo '```'
+            cat release/sha256sums
+            echo '```'
+          } > notes.md
+          gh release create "$TAG" release/* \
+            --target "$GITHUB_SHA" \
+            --title "RA81 OpenWrt $VERSION (build ${{ github.run_number }})" \
+            --notes-file notes.md

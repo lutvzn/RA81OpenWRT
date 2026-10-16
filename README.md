@@ -77,11 +77,17 @@ add packages.
 ### Building on GitHub Actions
 
 If you fork or push this repository to GitHub, go to **Actions → Build firmware → Run
-workflow**. Choose the variant (`generic`, `files-ap` or `both`). The job runs
-`scripts/build.sh` on an Ubuntu 24.04 runner, then runs `tools/validate-images.sh` and
-`tools/test-dualboot.sh`, and uploads the `out/` directory as an artifact (images +
-`sha256sums`). A cold build takes about 1.5–2.5 hours on a standard runner. Downloaded
-sources are cached between runs.
+workflow** and choose the variant (`generic`, `files-ap` or `both`). The job:
+
+1. runs `scripts/build.sh` on an Ubuntu 24.04 runner (a cold build takes about
+   1.5–2.5 hours; downloaded sources are cached between runs);
+2. runs `tools/validate-images.sh` and `tools/test-dualboot.sh` and fails if any check
+   fails;
+3. uploads `out/` as a workflow artifact;
+4. **publishes a GitHub Release** (tag `ra81-<openwrt version>-run<N>`) with the
+   images and a combined `sha256sums`. Images of the `files-ap` variant carry
+   `-files-ap` in their names. Untick "Publish the images as a GitHub Release" to
+   skip this step.
 
 ### Access-point profile (example)
 
