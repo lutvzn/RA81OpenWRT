@@ -16,7 +16,9 @@ unless marked otherwise.
 | `patches/` | OpenWrt patch series on top of `patches/BASE` (v25.12.5) | yes |
 | `configs/ra81.config` | diffconfig (target, device, LuCI, initramfs) | yes |
 | `configs/files-ap/` | optional first-boot overlay: this unit's AP role (10.0.0.3/23, no DHCP) | yes |
-| `scripts/build.sh` | reproducible build: checkout tag, `git am` patches, feeds, build, copy to `out/` | yes |
+| `scripts/build.sh` | reproducible build, also the dev build: tag + `git am` patches on branch `ra81-25.12`, feeds, build, copy to `out/` | yes |
+| `scripts/export-patches.sh` | `git format-patch` the dev tree's commits into `patches/` | yes |
+| `tools/test-build.sh` | tests `build.sh`/`export-patches.sh` (stamps, feeds, overlays, dev workflow) on a local fixture | yes |
 | `scripts/ra81-install-slot.sh` | on-router installer into the inactive dual-boot slot | yes |
 | `firmware/bdf/` | the repacked `board-2.bin` files + provenance (`firmware/bdf/README.md`) | yes |
 | `tools/bd-*.py` | board-2.bin list/extract/encode (encoder is byte-identical to ath11k-bdencoder) | yes |
@@ -24,7 +26,7 @@ unless marked otherwise.
 | `tools/validate-images.sh` | static checks of the outputs (UBI volumes, FIT config/arch, DTB, rootfs, sysupgrade tar) | yes |
 | `.github/workflows/build.yml` | manual GitHub Actions build (variant: generic / files-ap / both), validates, uploads `out/` | yes |
 | `tools/test-dualboot.sh` | runs the shipped dual-boot library against a modelled U-Boot (7 scenarios) | yes |
-| `build/openwrt` | git worktree of `references/openwrt/` on branch `ra81-25.12` (dev tree) | no |
+| `build/openwrt` | dev/build tree on branch `ra81-25.12` (here a git worktree of `references/openwrt/`; `build.sh` clones a fresh one if missing) | no |
 | `build/stockfw` | stock RA81 1.0.33 firmware + extracted rootfs | no |
 | `build/ref` | qca-wireless clone, kernel source excerpts | no |
 | `ra81-backup/` | **full MTD backup of this unit** (22 partitions, sha256 verified vs router) | no — private |
@@ -32,10 +34,13 @@ unless marked otherwise.
 | `out/` | build outputs | no |
 | `references/openwrt/`, `openwrt-redmi-ax3000/`, `Redmi_AX3000_immortalwrt/`, `redmi-ax3000-ra81-openwrt-toolkit/`, `xmir-patcher/` | reference clones | no |
 
-Development workflow: edit in `build/openwrt` (branch `ra81-25.12`), commit, then
-re-export with
-`git -C build/openwrt format-patch --binary --zero-commit -o ../../patches v25.12.5..HEAD`
-(delete the old `patches/*.patch` first).
+Development workflow (same as in the README, so contributors get the same tree):
+edit in `build/openwrt` (branch `ra81-25.12`), commit, build with `scripts/build.sh`,
+then `scripts/export-patches.sh` and commit `patches/`. Do not run `make` by hand for
+images: `build.sh` also rewrites `.config` from `configs/ra81.config`, sets up
+ccache/`dl`, and sets `files/` (removed unless `--files` is given). `build.sh` never
+discards unexported commits on the branch (only `--clean` does); a tree whose commits
+match `patches/` by patch-id is kept as is.
 
 ## Build
 
@@ -46,7 +51,9 @@ system Python (`/usr/bin/python3`, 3.12) — `scripts/build.sh` puts `/usr/bin` 
 ```
 scripts/build.sh                            # generic image (192.168.1.1, DHCP server on LAN)
 scripts/build.sh --files configs/files-ap   # this unit's AP profile (see below)
-scripts/build.sh --clean                    # discard local changes in build/openwrt, re-apply patches
+scripts/build.sh --clean                    # discard local changes/unexported commits, re-apply patches
+scripts/export-patches.sh                   # dev tree commits -> patches/
+tools/test-build.sh                         # wrapper tests (no compile, no network)
 SRC=build/openwrt-repro OPENWRT_URL=$PWD/references/openwrt scripts/build.sh   # build in another tree
 tools/validate-images.sh [bin dir]          # static validation of the outputs
 tools/test-dualboot.sh                      # dual-boot protocol simulation

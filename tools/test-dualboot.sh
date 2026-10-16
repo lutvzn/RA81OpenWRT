@@ -2,7 +2,7 @@
 # Simulates the RA81 dual-boot protocol end to end: the real
 # /lib/functions/xiaomi-dualboot.sh from the OpenWrt tree runs against a
 # file-backed U-Boot environment, and U-Boot's slot selection is modelled
-# exactly as disassembled from the RA81 APPSBL (see CLAUDE.md).
+# exactly as disassembled from the RA81 APPSBL (see AGENTS.md).
 #
 #   tools/test-dualboot.sh [path/to/xiaomi-dualboot.sh]
 set -u

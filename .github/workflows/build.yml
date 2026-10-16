@@ -21,13 +21,9 @@ permissions:
 
 jobs:
   build:
-    name: Build (${{ matrix.variant }})
+    name: Build (${{ inputs.variant }})
     runs-on: ubuntu-24.04
     timeout-minutes: 360
-    strategy:
-      fail-fast: false
-      matrix:
-        variant: ${{ fromJSON(inputs.variant == 'both' && '["generic","files-ap"]' || format('["{0}"]', inputs.variant)) }}
 
     steps:
       - name: Free disk space
@@ -50,6 +46,9 @@ jobs:
       - name: Check out
         uses: actions/checkout@v4
 
+      - name: Test build wrapper
+        run: tools/test-build.sh
+
       - name: Restore download cache
         uses: actions/cache@v4
         with:
@@ -59,25 +58,41 @@ jobs:
             dl-${{ hashFiles('patches/BASE', 'configs/ra81.config') }}-
             dl-
 
-      - name: Build
-        run: |
-          if [ "${{ matrix.variant }}" = files-ap ]; then
-            scripts/build.sh -j "$(nproc)" --files configs/files-ap
-          else
-            scripts/build.sh -j "$(nproc)"
-          fi
+      - name: Restore compiler cache
+        uses: actions/cache@v4
+        with:
+          path: build/ccache
+          key: ccache-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('patches/BASE', 'configs/ra81.config') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            ccache-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('patches/BASE', 'configs/ra81.config') }}-
+            ccache-${{ runner.os }}-${{ runner.arch }}-
 
-      - name: Validate images
+      - name: Prepare validation tools
         run: |
           python3 -m venv build/venv-tools
           build/venv-tools/bin/pip install --quiet ubi_reader
-          tools/validate-images.sh
+
+      # Reuse the toolchain and compiled packages for the second image. Validate
+      # each variant before the next build replaces bin/targets outputs.
+      - name: Build and validate
+        env:
+          VARIANT: ${{ inputs.variant }}
+        run: |
+          variants=("$VARIANT")
+          [ "$VARIANT" != both ] || variants=(generic files-ap)
+          for variant in "${variants[@]}"; do
+            args=()
+            [ "$variant" != files-ap ] || args=(--files configs/files-ap)
+            scripts/build.sh -j "$(nproc)" "${args[@]}"
+            tools/validate-images.sh
+          done
           tools/test-dualboot.sh
+          build/openwrt/staging_dir/host/bin/ccache --show-stats
 
       - name: Upload images
         uses: actions/upload-artifact@v4
         with:
-          name: ra81-openwrt-${{ matrix.variant }}-${{ github.sha }}
+          name: ra81-openwrt-${{ inputs.variant }}-${{ github.sha }}
           path: out/
           if-no-files-found: error
 

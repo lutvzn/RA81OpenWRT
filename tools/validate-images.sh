@@ -5,7 +5,7 @@
 set -uo pipefail
 
 TOP=$(cd "$(dirname "$0")/.." && pwd)
-BIN=${1:-$TOP/build/openwrt/bin/targets/qualcommax/ipq50xx}
+BIN=${1:-${SRC:-$TOP/build/openwrt}/bin/targets/qualcommax/ipq50xx}
 VENV=$TOP/build/venv-tools/bin
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT

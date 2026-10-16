@@ -12,7 +12,7 @@
 #                    bdata, or any other partition.
 #
 # Recovery: if the new system does not finish booting, power-cycle the router;
-# U-Boot then rolls back to the current slot (see CLAUDE.md, "Dual boot").
+# U-Boot then rolls back to the current slot (see AGENTS.md, "Dual boot").
 #
 # Usage: ra81-install-slot.sh [--yes] [--reboot] IMAGE.ubi [SHA256]
 

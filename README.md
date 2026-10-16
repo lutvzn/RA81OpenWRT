@@ -44,8 +44,10 @@ Base: `patches/BASE` (OpenWrt v25.12.5).
 
 Requirements: a Linux host with the
 [OpenWrt build prerequisites](https://openwrt.org/docs/guide-developer/toolchain/install-buildsystem),
-~15 GB of disk space and network access. A first build takes about 1–2 hours (it builds
-the toolchain); later builds take minutes.
+~15 GB of disk space and network access. Use the distribution's Python (the build
+script puts `/usr/bin` first in `PATH`). Builds are tested on Oracle Linux 10 and on
+Ubuntu 24.04 (GitHub Actions). A first build takes about 1–2 hours (it builds the
+toolchain); later builds take minutes.
 
 ```sh
 git clone <this repository> ra81-openwrt
@@ -67,12 +69,61 @@ Options:
 ```sh
 scripts/build.sh -j 8                         # parallel jobs
 scripts/build.sh --files configs/files-ap     # add a first-boot overlay (see below)
-scripts/build.sh --clean                      # discard local changes in build/openwrt
+scripts/build.sh --clean                      # discard local changes and unexported commits in build/openwrt
+scripts/build.sh --update-feeds               # refresh feed sources and installed packages
 SRC=/path/to/tree DL_DIR=/path/to/dl scripts/build.sh   # other source / download dirs
 ```
 
 `configs/ra81.config` selects the device, LuCI and the initramfs image. Edit it to
-add packages.
+add packages. Each build copies it to `.config` in the tree, so changes made with
+`make menuconfig` in the tree are overwritten: save them back with
+`./scripts/diffconfig.sh` (drop the `CONFIG_CCACHE*` lines the build script adds).
+
+### Faster repeat builds
+
+- Keep the same `SRC` tree: OpenWrt reuses its host tools, toolchain and compiled
+  packages. `--clean` resets the source/patches and refreshes feeds; it does not
+  remove build directories or shared caches.
+- Feeds are installed on the first build, then reused. Use `--update-feeds` when
+  you deliberately want newer feed packages. Changing the feed configuration or
+  reapplying the patch series also triggers a refresh. Builds no longer fetch
+  moving feed revisions on every invocation (feed commits are not locked).
+- OpenWrt's built-in **ccache** is enabled by default, with a shared 10 GB cache at
+  `build/ccache`. Override with `CCACHE_DIR=/path/to/cache` and
+  `CCACHE_MAXSIZE=20G`; use `USE_CCACHE=0 scripts/build.sh` to disable it. The first
+  build populates the cache; later recompilations can reuse compiler results.
+  Enabling it in an existing tree may cause a one-time rebuild.
+- To build both variants locally, run `scripts/build.sh` followed by
+  `scripts/build.sh --files configs/files-ap` in the same tree. The second build
+  reuses compiled packages and regenerates the images with the overlay.
+- Jobs default to `nproc`; use `-j N` to tune parallelism for available RAM/CPUs.
+  More jobs than cores are not necessarily faster.
+
+`tools/test-build.sh` tests the wrapper's cache/refresh and overlay behavior with
+local Git/Make fixtures, without compiling firmware or accessing the network.
+
+### Changing the firmware (development)
+
+`scripts/build.sh` is also the development build: there is no separate setup. The
+tree it creates, `build/openwrt`, is on branch `ra81-25.12` (OpenWrt v25.12.5 + one
+commit per patch). To change the firmware:
+
+```sh
+scripts/build.sh                                 # creates build/openwrt (once)
+cd build/openwrt                                 # edit target/, package/ ...
+git commit -a -m "qualcommax: ipq50xx: redmi-ax3000: ..."
+cd ../..
+scripts/build.sh                                 # builds the tree with your commits
+scripts/export-patches.sh                        # writes patches/*.patch
+git add patches && git commit
+```
+
+While `patches/` is unchanged, the build uses the tree as it is, including commits
+that have not been exported yet. When `patches/` changes (e.g. after `git pull`), the
+tree is reset to the tag and the series is re-applied, unless that would discard
+commits that are not in `patches/`: then the build stops and asks you to export them
+or to use `--clean`. A tree that already matches `patches/` (as after
+`export-patches.sh`) is kept as it is.
 
 ### Building on GitHub Actions
 
@@ -80,7 +131,9 @@ If you fork or push this repository to GitHub, go to **Actions → Build firmwar
 workflow** and choose the variant (`generic`, `files-ap` or `both`). The job:
 
 1. runs `scripts/build.sh` on an Ubuntu 24.04 runner (a cold build takes about
-   1.5–2.5 hours; downloaded sources are cached between runs);
+   1.5–2.5 hours; downloaded sources and compiler results are cached between runs).
+   With `both`, the variants share one build tree: the toolchain and packages are
+   compiled once, and each variant is validated before building the next;
 2. runs `tools/validate-images.sh` and `tools/test-dualboot.sh` and fails if any check
    fails;
 3. uploads `out/` as a workflow artifact;
@@ -197,12 +250,13 @@ sysupgrade /tmp/sysupgrade.bin
 ```
 patches/            OpenWrt patch series (git format-patch) on top of patches/BASE
 configs/            ra81.config (diffconfig) and files-ap (example overlay)
-scripts/build.sh    reproducible build
+scripts/build.sh    reproducible build (also the development build)
+scripts/export-patches.sh      export commits in build/openwrt to patches/
 scripts/ra81-install-slot.sh   installer for the inactive slot (runs on the router)
 tools/              BDF tools, image validator, dual-boot simulation, U-Boot xref helper
 .github/workflows/  manual GitHub Actions build (workflow_dispatch)
 firmware/bdf/       Wi-Fi board data files (see firmware/bdf/README.md)
-CLAUDE.md           detailed development notes: findings, decisions, test results
+AGENTS.md           detailed development notes: findings, decisions, test results
 ```
 
 ## Credits and sources
