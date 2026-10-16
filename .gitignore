@@ -1,5 +1,5 @@
 # Third-party reference clones (see CLAUDE.md for their origins)
-/openwrt/
+/references/
 
 # Build tree, downloads, stock firmware extraction, python venv
 /build/

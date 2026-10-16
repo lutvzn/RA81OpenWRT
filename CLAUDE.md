@@ -24,13 +24,13 @@ unless marked otherwise.
 | `tools/validate-images.sh` | static checks of the outputs (UBI volumes, FIT config/arch, DTB, rootfs, sysupgrade tar) | yes |
 | `.github/workflows/build.yml` | manual GitHub Actions build (variant: generic / files-ap / both), validates, uploads `out/` | yes |
 | `tools/test-dualboot.sh` | runs the shipped dual-boot library against a modelled U-Boot (7 scenarios) | yes |
-| `build/openwrt` | git worktree of `openwrt/` on branch `ra81-25.12` (dev tree) | no |
+| `build/openwrt` | git worktree of `references/openwrt/` on branch `ra81-25.12` (dev tree) | no |
 | `build/stockfw` | stock RA81 1.0.33 firmware + extracted rootfs | no |
 | `build/ref` | qca-wireless clone, kernel source excerpts | no |
 | `ra81-backup/` | **full MTD backup of this unit** (22 partitions, sha256 verified vs router) | no — private |
 | `hwinfo/` | live dumps: dmesg, running DTB/DTS, sysinfo (**contains Wi-Fi key and U-Boot secrets**) | no — private |
 | `out/` | build outputs | no |
-| `openwrt/`, `openwrt-redmi-ax3000/`, `Redmi_AX3000_immortalwrt/`, `redmi-ax3000-ra81-openwrt-toolkit/`, `xmir-patcher/` | reference clones | no |
+| `references/openwrt/`, `openwrt-redmi-ax3000/`, `Redmi_AX3000_immortalwrt/`, `redmi-ax3000-ra81-openwrt-toolkit/`, `xmir-patcher/` | reference clones | no |
 
 Development workflow: edit in `build/openwrt` (branch `ra81-25.12`), commit, then
 re-export with
@@ -47,7 +47,7 @@ system Python (`/usr/bin/python3`, 3.12) — `scripts/build.sh` puts `/usr/bin` 
 scripts/build.sh                            # generic image (192.168.1.1, DHCP server on LAN)
 scripts/build.sh --files configs/files-ap   # this unit's AP profile (see below)
 scripts/build.sh --clean                    # discard local changes in build/openwrt, re-apply patches
-SRC=build/openwrt-repro OPENWRT_URL=$PWD/openwrt scripts/build.sh   # build in another tree
+SRC=build/openwrt-repro OPENWRT_URL=$PWD/references/openwrt scripts/build.sh   # build in another tree
 tools/validate-images.sh [bin dir]          # static validation of the outputs
 tools/test-dualboot.sh                      # dual-boot protocol simulation
 ```
@@ -313,7 +313,7 @@ To go back to the old firmware: `fw_setenv flag_last_success 0; reboot`.
 
 ## Reference clones
 
-- `openwrt/` — upstream OpenWrt (worktree source for `build/openwrt`)
+- `references/openwrt/` — upstream OpenWrt (worktree source for `build/openwrt`)
 - `openwrt-redmi-ax3000/` — hzyitc port (5.15 mainline branch; QSDK branches exist)
   — origin of the currently running firmware (21.02 QSDK, kernel 5.4)
 - `Redmi_AX3000_immortalwrt/` — kmiit ImmortalWrt port; branch `redmi_ax3000-25.12`
