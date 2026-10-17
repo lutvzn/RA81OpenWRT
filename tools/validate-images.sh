@@ -76,7 +76,16 @@ check "bootargs-append root=/dev/ubiblock0_1" "grep -q 'bootargs-append = \" roo
 check "smem partitions with 0:art node" "grep -q 'label = \"0:art\"' '$WORK/board.dts'"
 check "NAND ECC strength 8" "grep -q 'nand-ecc-strength = <0x08>' '$WORK/board.dts'"
 check "tz reserved 4 MiB" "grep -A1 'tz@4ac00000' '$WORK/board.dts' | grep -q '0x4ac00000 0x00 0x400000'"
-check "q6 region 48 MiB" "grep -A1 'wcss@4b000000' '$WORK/board.dts' | grep -q '0x4b000000 0x00 0x3000000'"
+# Multi-PD Q6 layout, 0x4b000000-0x4e000000 as the vendor's 48 MiB q6_mem_regions
+for r in wcss@4b000000:'0x4b000000 0x00 0x1400000' q6-region-ipq5018@4c400000:'0x4c400000 0x00 0xd00000' \
+	m3-dump-ipq5018@4d100000:'0x4d100000 0x00 0x100000' q6-region-qcn6122-1@4d200000:'0x4d200000 0x00 0xd00000' \
+	m3-dump-qcn6122-1@4df00000:'0x4df00000 0x00 0x100000'; do
+	check "reserved ${r%%:*}" "grep -A2 '${r%%:*} {' '$WORK/board.dts' | grep -q '${r#*:}'"
+done
+check "nss region 8 MiB" "grep -A2 'memory@40000000 {' '$WORK/board.dts' | grep -q '0x40000000 0x00 0x800000'"
+check "nss@40000000 node (ipq5018-nss.dtsi)" "grep -q 'compatible = \"qcom,nss\"' '$WORK/board.dts'"
+check "bootargs swiotlb=1 coherent_pool=512K" "grep 'bootargs-append' '$WORK/board.dts' | grep -q 'swiotlb=1 coherent_pool=512K'"
+check "gmac1 enabled, sgmii" "awk '/ethernet@39d00000 {/,/^\t\t};/' '$WORK/board.dts' | grep -q 'status = \"okay\"'"
 check "tsens disabled" "awk '/thermal-sensor@4a9000/,/};/' '$WORK/board.dts' | grep -q 'status = \"disabled\"'"
 check "wifi calibration variant" "[ \$(grep -c 'qcom,ath11k-calibration-variant = \"Xiaomi-Redmi-AX3000\"' '$WORK/board.dts') -eq 2 ]"
 check "ath11k fw memory mode 2 (x2)" "[ \$(grep -c 'qcom,ath11k-fw-memory-mode = <0x02>' '$WORK/board.dts') -eq 2 ]"
@@ -96,6 +105,11 @@ check "board-2.bin (QCN6122) is ours" "cmp -s '$R/lib/firmware/ath11k/QCN6122/hw
 check "xiaomi-dualboot init enabled" "ls '$R'/etc/rc.d/ | grep -q 'S99xiaomi-dualboot'"
 check "no USB kmods" "! ls '$R'/lib/modules/*/ 2>/dev/null | grep -q dwc3"
 check "kmod-ath11k-ahb present" "ls '$R'/lib/modules/*/ | grep -q '^ath11k_ahb.ko'"
+check "NSS service installed (S19nss)" "ls '$R'/etc/rc.d/ | grep -q '^S19nss$'"
+check "no ath11k autoload (the nss service loads it)" "! ls '$R'/etc/modules.d/ | grep -q ath11k"
+check "NSS firmware present" "ls '$R'/lib/firmware/ | grep -q '^qca-nss0'"
+check "qca-nss-drv, qca-dwmac-nss, qca-dsa-nss modules" "for m in qca-nss-drv qca-dwmac-nss qca-dsa-nss; do ls '$R'/lib/modules/*/ | grep -q \"^\$m.ko\" || ls '$R'/lib/modules/*/ | grep -q \"^\$(echo \$m | tr - _).ko\" || exit 1; done"
+check "ECM has the DSA port patch (0051)" "grep -qa dsa_port_from_netdev '$R'/lib/modules/*/ecm.ko"
 check "kmod qca8k (DSA) present or builtin" "ls '$R'/lib/modules/*/ | grep -q qca8k || grep -q qca8k '$R'/lib/modules/*/modules.builtin 2>/dev/null || true"
 for s in etc/init.d/xiaomi-dualboot lib/functions/xiaomi-dualboot.sh lib/upgrade/xiaomi-dualboot.sh lib/upgrade/platform.sh lib/preinit/81_xiaomi_dualboot; do
 	check "sh -n /$s" "sh -n '$R/$s'"

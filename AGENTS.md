@@ -8,15 +8,31 @@ Everything about the device in this file was verified against the live router
 (10.0.0.3), its full flash dump, the stock Xiaomi firmware or the U-Boot binary,
 unless marked otherwise.
 
+> **Branch `nss-6.18` (NSS offload line, in progress since 2026-10-16).** Here the
+> base is not v25.12.5 but kuncy7/openwrt-nss-edma `c3po-tag-8021q` at release
+> `ipq50xx-2026.10.15-2` (OpenWrt main, kernel 6.18, stmmac + NSS, DSA `qca-8021q`
+> tagger), pinned in `patches/BASE`; feeds pinned in `configs/feeds.conf` to that
+> release's `feeds-256m.buildinfo`. Dev tree `build/openwrt-nss` (worktree of
+> `references/openwrt-nss-edma`), branch `ra81-nss`; outputs in
+> `out/nss-2026.10.15-2-<rev>/`. Patches: 0001 = device port (DTS in
+> `target/linux/qualcommax/dts/`, `gmac1`+`uniphy0`, `ipq5018-nss.dtsi`, 8 MiB
+> `nss_region`, mode-2 multi-PD Q6 layout of the AX3000T v2, BDFs in
+> `ipq-wifi/files/`), 0002 = revert of the fork's debug-aids commit (no
+> `STRICT_DEVMEM`). The 25.12 ring-shrink patches are dropped: the fork's
+> `ATH11K_MEM_PROFILE_256M` shrinks the rings further. Config = the fork's release
+> groups common + 256m. Status, plan and checks: `docs/nss-evaluation.md`. The rest
+> of this file describes the 25.12 line (`master`) unless it says otherwise.
+
 ## Repository layout
 
 | Path | What | In git |
 |---|---|---|
 | `README.md`, `LICENSE` | user-facing docs (build/install/recovery/credits), GPL-2.0 | yes |
-| `patches/` | OpenWrt patch series on top of `patches/BASE` (v25.12.5) | yes |
+| `patches/` | OpenWrt patch series on top of the tree named in `patches/BASE` (URL, ref, label, dev tree, branch) | yes |
 | `configs/ra81.config` | diffconfig (target, device, LuCI, initramfs) | yes |
+| `configs/feeds.conf` | pinned feeds, copied into the tree (NSS line only) | yes |
 | `configs/files-ap/` | optional first-boot overlay: this unit's AP role (10.0.0.3/23, no DHCP) | yes |
-| `scripts/build.sh` | reproducible build, also the dev build: tag + `git am` patches on branch `ra81-25.12`, feeds, build, copy to `out/` | yes |
+| `scripts/build.sh` | reproducible build, also the dev build: `patches/BASE` ref + `git am` patches on its branch, feeds, build, copy to `out/` | yes |
 | `scripts/export-patches.sh` | `git format-patch` the dev tree's commits into `patches/` | yes |
 | `tools/test-build.sh` | tests `build.sh`/`export-patches.sh` (stamps, feeds, overlays, dev workflow) on a local fixture | yes |
 | `scripts/ra81-install-slot.sh` | on-router installer into the inactive dual-boot slot | yes |
@@ -26,13 +42,14 @@ unless marked otherwise.
 | `tools/validate-images.sh` | static checks of the outputs (UBI volumes, FIT config/arch, DTB, rootfs, sysupgrade tar) | yes |
 | `.github/workflows/build.yml` | manual GitHub Actions build (variant: generic / files-ap / both), validates, uploads `out/` | yes |
 | `tools/test-dualboot.sh` | runs the shipped dual-boot library against a modelled U-Boot (7 scenarios) | yes |
+| `docs/nss-evaluation.md` | NSS offload evaluation, throughput measurements, port plan (2026-10-16) | yes |
 | `build/openwrt` | dev/build tree on branch `ra81-25.12` (here a git worktree of `references/openwrt/`; `build.sh` clones a fresh one if missing) | no |
 | `build/stockfw` | stock RA81 1.0.33 firmware + extracted rootfs | no |
 | `build/ref` | qca-wireless clone, kernel source excerpts | no |
 | `ra81-backup/` | **full MTD backup of this unit** (22 partitions, sha256 verified vs router) | no — private |
 | `hwinfo/` | live dumps: dmesg, running DTB/DTS, sysinfo (**contains Wi-Fi key and U-Boot secrets**) | no — private |
 | `out/` | build outputs | no |
-| `references/openwrt/`, `openwrt-redmi-ax3000/`, `Redmi_AX3000_immortalwrt/`, `redmi-ax3000-ra81-openwrt-toolkit/`, `xmir-patcher/` | reference clones | no |
+| `references/openwrt/`, `references/openwrt-nss-edma/` (kuncy7 NSS fork, all branches), `openwrt-redmi-ax3000/`, `Redmi_AX3000_immortalwrt/`, `redmi-ax3000-ra81-openwrt-toolkit/`, `xmir-patcher/` | reference clones | no |
 
 Development workflow (same as in the README, so contributors get the same tree):
 edit in `build/openwrt` (branch `ra81-25.12`), commit, build with `scripts/build.sh`,
@@ -87,7 +104,7 @@ Outputs (`bin/targets/qualcommax/ipq50xx/`):
 | RAM | 256 MiB @ 0x40000000 | dmesg cnss `memory: 40000000 268435456` |
 | NAND | GigaDevice GD5F1GQ5REYIG SPI-NAND 128 MiB, 2 KiB page, 128 KiB block, 128 B OOB, QPIC ECC BCH8/512 | dmesg |
 | Switch | QCA8337 (chip 0x1302) on MDIO1 addr 17 (0x11), reset GPIO 26 | live DT, dmesg |
-| CPU link | IPQ MAC1 —SGMII— QCA8337 **MAC6** (vendor `PAD6_MODE = MAC6_SGMII_EN`); MAC0—GE PHY—QCA8337 PHY4 (unused) | hzyitc DTS, vendor board.json |
+| CPU link | IPQ MAC1 —SGMII— QCA8337 **MAC6** (vendor `PAD6_MODE = MAC6_SGMII_EN`); MAC0—GE PHY—QCA8337 PHY4/port 5 (unused by this build; **stock uses it as the WAN link**: VLAN 2 = ports 4+5 → `eth0`, see `docs/nss-evaluation.md`) | hzyitc DTS, vendor board.json, stock `/etc/config/network` |
 | Ports | PHY0..2 = LAN1..3, PHY3 = WAN (QCA8337 ports 1..4) | vendor board.json/swconfig |
 | Wi-Fi 2.4 | IPQ5000 internal, ath11k AHB, board ID **0x24** | ART caldata header, U-Boot `cnss2.bdf_integrated=0x24` |
 | Wi-Fi 5 | QCN6102 (QCN6122 family) on PCIe1, user PD 2, reset GPIO 27, board ID **0x60** | vendor DT/cmdline |
@@ -279,7 +296,10 @@ Each has `*-squashfs-factory.ubi` (first install into a slot), `*-squashfs-sysup
   is only the GMAC Ethernet driver. Wi-Fi<->Ethernet bridging and any routing run on
   the A53 cores. Software flow offloading (nftables flowtable) is available but off
   (irrelevant for the bridged-AP role); hardware flow offload is not supported. The
-  previous hzyitc firmware did not offload NAT/Wi-Fi either.
+  previous hzyitc QSDK firmware *did* boot the NSS core, ECM and NSS Wi-Fi interfaces
+  (`hwinfo/dmesg.txt`), as stock does. Measured 2026-10-16: Wi-Fi throughput is
+  CPU-bound (~390-470 Mbit/s to the router, CPU0 softirq at 99 %); NSS evaluation and
+  plan in `docs/nss-evaluation.md`.
 - ath11k in FW memory mode 2: max 8 vdevs / 128 peers per radio.
 - RA81 only. CR880x variants (M79 uses board ID 0x10) and the hzyitc/ImmortalWrt
   `redmi,ax3000` sysupgrade path are not covered; install with `ra81-install-slot.sh`.
@@ -310,6 +330,11 @@ Then on 10.0.0.3 (or 192.168.1.1): `cat /proc/cmdline` (ubi.mtd=rootfs_1),
 To go back to the old firmware: `fw_setenv flag_last_success 0; reboot`.
 
 ## Remaining tasks / ideas
+
+- **Next (public release needs ~1 Gbit)**: NSS offload by porting the RA81 onto
+  kuncy7/openwrt-nss-edma `c3po-tag-8021q` (6.18.55, stmmac + DSA 8021q tagger);
+  build a WAN/LAN iperf3 bench first. Full plan, measurements and the router state
+  left behind: `docs/nss-evaluation.md`.
 
 - Restore the owner's Wi-Fi (SSID/key/channel 100 HE160 from the old config) — needs OK.
 - Press-test reset/mesh buttons; long-term stability with clients; throughput.

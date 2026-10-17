@@ -10,6 +10,9 @@ export GIT_COMMITTER_NAME=test GIT_COMMITTER_EMAIL=test@localhost
 mkdir -p "$WORK"/{scripts,configs,patches,build/source/scripts}
 cp "$TOP/scripts/build.sh" "$TOP/scripts/export-patches.sh" "$WORK/scripts/"
 printf 'CONFIG_TEST=y\n' > "$WORK/configs/ra81.config"
+printf '%s\n' '# fixture' OPENWRT_URL=https://example.invalid/openwrt.git \
+	OPENWRT_REF=v25.12.5 OPENWRT_LABEL=v25.12.5 BRANCH=ra81-25.12 \
+	SRC=build/unused > "$WORK/patches/BASE"
 SRC=$WORK/build/source
 export SRC
 cd "$SRC"
@@ -122,4 +125,17 @@ cp "$WORK/spare/0002-extra.patch" "$WORK/patches/"
 run
 [ "$(cat device)" = dev ] && [ -f extra ]
 expect_updates 8
-printf 'PASS: build wrapper caching, refresh failure, overlays, clean reset, dev workflow and options\n'
+# A base given as a commit id: same tree, so nothing is re-applied.
+head=$(git rev-parse HEAD)
+OPENWRT_REF=$(git rev-parse v25.12.5) OPENWRT_LABEL=byid run
+grep -q 'already matches patches/' "$WORK/build.log"
+[ "$(git rev-parse HEAD)" = "$head" ]
+[ -s "$WORK/out/byid-test/sha256sums" ]
+# Pinned feeds in configs/feeds.conf replace the tree's and refresh the feeds.
+printf 'src-git test https://example.invalid/feed^0123\n' > "$WORK/configs/feeds.conf"
+run
+cmp -s feeds.conf "$WORK/configs/feeds.conf"
+expect_updates 9
+run
+expect_updates 9
+printf 'PASS: build wrapper caching, refresh failure, overlays, clean reset, dev workflow, base ref, pinned feeds and options\n'

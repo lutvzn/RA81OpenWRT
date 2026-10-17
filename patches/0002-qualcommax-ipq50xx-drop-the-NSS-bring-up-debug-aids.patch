@@ -1,0 +1,28 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: lutvzn <106083845+lutvzn@users.noreply.github.com>
+Date: Fri, 16 Oct 2026 20:58:14 -0300
+Subject: [PATCH 2/2] qualcommax: ipq50xx: drop the NSS bring-up debug aids
+
+This reverts commit b97854b2400db7b4a9ce2b5c1e9311a00b167037
+("qualcommax: ipq50xx: debug aids for NSS bring-up work"), as its own
+message asks for a build meant to be deployed: with STRICT_DEVMEM off
+any process with /dev/mem access can read all of physical memory.
+---
+ target/linux/qualcommax/ipq50xx/config-default | 4 ----
+ 1 file changed, 4 deletions(-)
+
+diff --git a/target/linux/qualcommax/ipq50xx/config-default b/target/linux/qualcommax/ipq50xx/config-default
+index 0517c1beb5..9485b2bf88 100644
+--- a/target/linux/qualcommax/ipq50xx/config-default
++++ b/target/linux/qualcommax/ipq50xx/config-default
+@@ -34,7 +34,3 @@ CONFIG_QCOM_TMEL_QMP_MAILBOX=y
+ CONFIG_SPI_QPIC_SNAND=y
+ CONFIG_STMMAC_ETH=y
+ CONFIG_STMMAC_PLATFORM=y
+-CONFIG_MAGIC_SYSRQ_SERIAL=y
+-CONFIG_MAGIC_SYSRQ_DEFAULT_ENABLE=0x1b6
+-CONFIG_DEVMEM=y
+-# CONFIG_STRICT_DEVMEM is not set
+-- 
+2.52.0
+

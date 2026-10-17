@@ -1,1 +1,14 @@
-v25.12.5
+# Tree that patches/*.patch apply to; read by scripts/build.sh and
+# scripts/export-patches.sh (environment variables of the same name override).
+#
+# kuncy7/openwrt-nss-edma, branch c3po-tag-8021q, at release
+# ipq50xx-2026.10.15-2 (OpenWrt main + NSS offload for IPQ5018, kernel 6.18).
+# The feeds are pinned in configs/feeds.conf to the commits that release
+# was built with (its feeds-256m.buildinfo).
+OPENWRT_URL=https://github.com/kuncy7/openwrt-nss-edma.git
+OPENWRT_REF=dff118f8521d26d462e3e71335cd8e9bf9c959ac
+# Prefix of the out/ directory name
+OPENWRT_LABEL=nss-2026.10.15-2
+# Build tree and its branch
+SRC=build/openwrt-nss
+BRANCH=ra81-nss

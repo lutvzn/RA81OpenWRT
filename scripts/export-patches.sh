@@ -1,18 +1,22 @@
 #!/bin/bash
-# Export the commits on top of the OpenWrt tag in the build tree to patches/.
+# Export the commits on top of the base ref (patches/BASE) in the build tree
+# to patches/.
 #
 #   scripts/export-patches.sh
 #
-# Development workflow: edit and commit in build/openwrt (branch ra81-25.12,
-# created by scripts/build.sh), run this script, commit patches/ here.
+# Development workflow: edit and commit in the build tree (SRC and BRANCH in
+# patches/BASE, created by scripts/build.sh), run this script, commit patches/
+# here.
 # scripts/build.sh then sees that the tree matches patches/ and keeps it as is.
 #
-# Environment: SRC (default build/openwrt), OPENWRT_TAG (default v25.12.5).
+# Environment: SRC, OPENWRT_REF (defaults from patches/BASE).
 set -euo pipefail
 
 TOP=$(cd "$(dirname "$0")/.." && pwd)
-SRC=${SRC:-$TOP/build/openwrt}
-OPENWRT_TAG=${OPENWRT_TAG:-v25.12.5}
+base() { sed -n "s/^$1=//p" "$TOP/patches/BASE"; }
+SRC=${SRC:-$(base SRC)}
+case "$SRC" in /*) ;; *) SRC=$TOP/$SRC ;; esac
+OPENWRT_REF=${OPENWRT_REF:-$(base OPENWRT_REF)}
 
 cd "$SRC"
 if ! git diff --quiet HEAD -- ||
@@ -20,11 +24,11 @@ if ! git diff --quiet HEAD -- ||
 	echo "$SRC has uncommitted changes; commit them first" >&2
 	exit 1
 fi
-if [ -z "$(git rev-list "$OPENWRT_TAG"..HEAD)" ]; then
-	echo "No commits on top of $OPENWRT_TAG in $SRC" >&2
+if [ -z "$(git rev-list "$OPENWRT_REF"..HEAD)" ]; then
+	echo "No commits on top of $OPENWRT_REF in $SRC" >&2
 	exit 1
 fi
 
 rm -f "$TOP"/patches/*.patch
-git format-patch -q --binary --zero-commit -o "$TOP/patches" "$OPENWRT_TAG"..HEAD
+git format-patch -q --binary --zero-commit -o "$TOP/patches" "$OPENWRT_REF"..HEAD
 ls "$TOP"/patches/*.patch
