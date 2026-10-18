@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: lutvzn <106083845+lutvzn@users.noreply.github.com>
 Date: Fri, 16 Oct 2026 20:58:14 -0300
-Subject: [PATCH 2/3] qualcommax: ipq50xx: drop the NSS bring-up debug aids
+Subject: [PATCH 2/4] qualcommax: ipq50xx: drop the NSS bring-up debug aids
 
 This reverts commit b97854b2400db7b4a9ce2b5c1e9311a00b167037
 ("qualcommax: ipq50xx: debug aids for NSS bring-up work"), as its own

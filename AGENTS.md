@@ -18,7 +18,9 @@ unless marked otherwise.
 > `target/linux/qualcommax/dts/`, `gmac1`+`uniphy0`, `ipq5018-nss.dtsi`, 8 MiB
 > `nss_region`, mode-2 multi-PD Q6 layout of the AX3000T v2, BDFs in
 > `ipq-wifi/files/`), 0002 = revert of the fork's debug-aids commit (no
-> `STRICT_DEVMEM`). The 25.12 ring-shrink patches are dropped: the fork's
+> `STRICT_DEVMEM`), 0003 = `vm.min_free_kbytes` 8192 (uci-defaults), 0004 =
+> `platform_pre_upgrade` frees memory (min_free 2048, rmmod ath11k, drop caches)
+> before the sysupgrade flash write. The 25.12 ring-shrink patches are dropped: the fork's
 > `ATH11K_MEM_PROFILE_256M` shrinks the rings further. Config = the fork's release
 > groups common + 256m. Status, plan and checks: `docs/nss-evaluation.md`. The rest
 > of this file describes the 25.12 line (`master`) unless it says otherwise.
@@ -337,7 +339,7 @@ To go back to the old firmware: `fw_setenv flag_last_success 0; reboot`.
 
 - **NSS line (branch `nss-6.18`)**: ported and running on the router since
   2026-10-17 (Wi-Fi<->LAN 550-660 Mbit/s at ~97 % CPU idle, MemAvailable 52 MB).
-  **Next steps** (sysupgrade memory, kmod repo, PPPoE NAT test; the 3 h soak and the NAT test (wired 922-930 Mbit/s) are done) and
+  **Next steps** (sysupgrade memory done: hook in patch 0004, frees 49.7 -> 108 MB, full sysupgrade to slot 1 passed; next: kmod repo, PPPoE NAT test (plan and risks written down: `docs/nss-evaluation.md` "To do next" #5); the 3 h soak and the NAT test (wired 922-930 Mbit/s) are done) and
   the router state left behind: `docs/nss-evaluation.md`, "To do next".
 
 - Restore the owner's Wi-Fi (SSID/key/channel 100 HE160 from the old config) — needs OK.

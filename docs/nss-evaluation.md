@@ -297,15 +297,86 @@ Not measured: PPPoE (no PPPoE server on the bench).
 2. ~~**Longer soak (a few hours)**~~ done, see "3 h soak" above (plateau, no leak). Original note: SUnreclaim rose 43.8 -> 47.0 MB in
    the last 5 min of the 30 min soak. Log MemAvailable/SUnreclaim/`drv_nss_skb_count`
    every minute; a steady climb = leak, a plateau = NSS pools filling.
-3. **Sysupgrade with little free memory.** The image (15 MB) goes to /tmp (RAM). With
-   the 8 MB floor ~36 MB stayed available after copying it, but on a busy router it
-   may not: free memory before the copy automatically (stop Wi-Fi / drop caches in a
-   pre-upgrade hook, as stock's `kill_plugin_process.sh` does), or document it.
+3. **Sysupgrade with little free memory** (done 2026-10-17: hook in patch 0004,
+   tested on the device, also through a full sysupgrade). The image (15 MB) goes to /tmp (RAM). With the 8 MB floor
+   ~36 MB stayed available after copying it, but on a busy router it may not.
+   Where sysupgrade can be hooked: nothing runs before the image reaches /tmp (LuCI
+   upload, `scp`, `sysupgrade <url>` wget, or the `cp` of a non-/tmp path), and
+   stage 1 (validate, config backup) allocates little. The only device hook is
+   `platform_pre_upgrade`, in stage 2 after services are killed and caches dropped,
+   before the ramfs copy and the flash write. At that point ath11k still holds its DP
+   rings and `min_free_kbytes` 8192 is still reserved. Patch 0004
+   (`xiaomi_redmi_ax3000_pre_upgrade`) lowers `min_free_kbytes` to 2048 (stock's
+   `kill_plugin_process.sh` uses 512), unloads `ath11k_ahb`/`ath11k` in the
+   background (waits at most 10 s, so a Q6 that will not stop cannot block the
+   upgrade), drops caches and logs MemAvailable before and after (UART console only: stage 2's
+   `kill_remaining` has killed logd by then, so `logger` goes nowhere). Nothing has
+   been flashed yet at that point, so a hang or a crash leaves the running slot as it
+   is.
+   For the copy itself (stage 1, not hookable) document a manual step for tight
+   cases: `wifi down; sync; echo 3 > /proc/sys/vm/drop_caches` before uploading.
+   **Function test on the router (2026-10-17, slot 0, r0+37564 with the patch-0004
+   `platform.sh` sourced from /tmp, AP up, 45 min uptime):** MemAvailable 50.3 MB
+   idle, 49.7 MB after `wifi down`, **108.3 MB after the hook** (MemFree 106 MB,
+   SUnreclaim 34.5 -> 29.3 MB); the hook took 2 s, `rmmod ath11k_ahb` returned with
+   the NSS Wi-Fi offload loaded (`remoteproc0: stopped remote processor q6wcss`), no
+   errors in dmesg, both log lines in `logread`. Rebooted: slot 0, 8192 again, AP up.
+   **Full sysupgrade (2026-10-17, slot 0 -> slot 1):** AP image r0+37565-3701f3e36f
+   (with 0004, sha256 `c62d5fdc...afe52`), Wi-Fi up during the copy, MemAvailable
+   53.4 MB before and 30.6 MB after `scp` of the 15.4 MB image, `sysupgrade -v`
+   (config kept). Back on SSH ~2 min later: slot 1 (`ubi.mtd=rootfs_1`),
+   self-confirmed (`flag_last_success=1`, `flag_ota_reboot=0`, `flag_boot_success=1`),
+   min_free 8192, ath11k loaded, test AP up, config (10.0.0.3, country BR) and SSH
+   host key kept, MemAvailable 54.8 MB, 0 allocation failures/OOM/driver errors in
+   dmesg. The hook's own log lines were not visible (no UART). The generic trial image
+   that was in slot 1 is gone (see #5 (b)).
 4. **Kernel module repository.** The image lists the OpenWrt snapshot feeds; their
    kmods are for another kernel (vermagic `93ef0a8c...` vs ours `c700d69b...`) and the
    `nss` feed URL 404s. Publish our build's kmods (`bin/targets/.../packages`) with each
    release, e.g. GitHub Pages as kuncy7 does, and point the image's repositories at
    it (`CONFIG_VERSION_REPO` / feed list).
+
+5. **PPPoE test (do later; estimate 1.5-2 h hands-on, +1 h with a soak).** Nothing has
+   been run with PPPoE on the RA81. Why it may fail (from kuncy7's history, all fixes
+   are in our base `dff118f852`, none verified here):
+   - The NSS PPPoE manager (`qca_nss_pppoe`) only learns sessions created after it
+     loads; if the session is older, ECM finds no interface for `pppoe-wan`, every flow
+     stays on the host (48 % CPU in the fork's measurement) and **nothing is logged**
+     (`7247752c6a`, `50e99a8cd8`). `nss-dwmac-up` re-dials every PPPoE interface after
+     the arm and logs "PPPoE: wan re-created" (`b2b6b3fff8`): check that on a cold boot.
+   - ECM deadlock against the ppp xmit path; fixed by the lockless helpers of kernel
+     patch 0961 (`0403ddf10a`). Only shows under load -> soak.
+   - Tagged PPPoE (`wan.35`, common ISP setup) goes through the qca-8021q tagger and the
+     firmware VLAN interface for the 802.1Q upper (`9ae6490255`, `ecb1d2daed`): recent
+     code, tested by the fork on the MX2000 (same QCA8337/SGMII topology) only.
+   - SQM with PPPoE has limits (fork README); not a throughput issue.
+
+   Plan: (a) on the host check for `pppoe-server` or `pppd` with the pppoe plugin
+   (install needs root); run it in the `inet` netns on `eno1` (extend
+   `tools/bench-nat.sh`, e.g. a `--pppoe` mode: server 172.16.0.1 <-> client
+   172.16.0.2 with chap, MTU 1492; also a VLAN-35 variant). (b) Reinstall the generic
+   trial image into the inactive slot with `ra81-install-slot.sh`, as in the NAT test
+   below (`out/nss-2026.10.15-2-r0+37564-e8dda8ca92-files-trial/`, sha256
+   `158576af...5011`, or a rebuild with 0004): the sysupgrade test of #3 overwrote
+   it on 2026-10-17. (c) Router: `wan` proto pppoe (username/password of the test
+   server), cold boot, then check `logread | grep -i pppoe`, `dmesg`, ECM
+   `tcp_accelerated_count` rising, `/sys/kernel/debug/qca-nss-drv/stats/pppoe`
+   non-zero, CPU idle. (d) Wired matrix with `sudo tools/bench-wired.sh` (expect
+   ~900+ Mbit/s, CPUs idle), plain and tagged. (e) Optional 1 h soak with
+   `tools/soak-mem.sh --load`. (f) Revert: uplink back in the WAN jack, power-cycle
+   (the trial never confirms, U-Boot falls back to slot 0), `sudo sh
+   tools/bench-nat.sh down`, `sudo nmcli con up APT22`.
+
+   Session notes for the next run: this host's NetBird session rides
+   `enp0s20f0u6` - do not move that cable. `nmcli`/`ip netns` need `sudo` (polkit
+   refuses NetBird SSH sessions), so give the user `!` commands. The bench NICs:
+   `eno1` (-> WAN jack, "internet" netns `inet`), RTL8153 USB GbE
+   `enp0s20f0u2u1` (-> `lan1`, wired client netns `lanc`, enabled by
+   `bench-wired.sh`), `wlp2s0` (Wi-Fi client on the test AP; needs the key in
+   `RA81-iperf`, `sudo nmcli -s -g 802-11-wireless-security.psk con show RA81-iperf`).
+   Reach the trial router at 192.168.1.1 (via `eno1` on a LAN jack, or `wlp2s0`);
+   the dead-wired-route trap: with `enp0s20f0u6` unplugged the host's SSH to 10.0.0.x
+   fails until the `10.0.0.0/23` route on it is removed.
 
 Smaller, when convenient: 2.4 GHz AP test on the NSS path; press-test reset/mesh
 buttons; optionally `min_free_kbytes` 4096; the second CPU link (GMAC0 -> port 5 for
@@ -313,9 +384,10 @@ WAN, plan step 3); README for the NSS line.
 
 ## State left on the router (10.0.0.3) on 2026-10-17
 
-- **Slot 0** (running, confirmed): NSS image with the ath11k NSS 256M profile and
-  patch 0003 (min_free 8192), AP profile, r0+37564-e8dda8ca92. **Slot 1** (fallback):
-  the same without 0003. The 25.12 images are no longer on the flash (restore from
+- **Slot 1** (running, confirmed, since the sysupgrade test of 2026-10-17 23:17):
+  NSS AP image with patches 0001-0004 (ath11k NSS 256M profile, min_free 8192,
+  pre-upgrade hook), r0+37565-3701f3e36f. **Slot 0** (fallback): the same without
+  0004, r0+37564-e8dda8ca92. The generic trial image is no longer on the flash. The 25.12 images are no longer on the flash (restore from
   `out/v25.12.5-*` with `ra81-install-slot.sh`, or `ra81-backup/`).
 - Test AP `RA81-iperf` on radio1 (5 GHz ch36 HE80, country BR), psk2+ccmp with a random
   key generated on 2026-10-17 (in the host's NetworkManager profile `RA81-iperf`;

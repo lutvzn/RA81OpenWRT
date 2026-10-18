@@ -1,0 +1,68 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: lutvzn <106083845+lutvzn@users.noreply.github.com>
+Date: Sat, 17 Oct 2026 23:08:58 -0300
+Subject: [PATCH 4/4] qualcommax: ipq50xx: redmi-ax3000: free memory before
+ sysupgrade
+
+The 15 MB image is held in /tmp, i.e. in RAM, on a board where the NSS
+and Q6 reservations leave ~173 MiB to Linux. Stage 2 kills userspace and
+drops the caches, but ath11k keeps its DP rings and the 8 MiB free
+memory floor stays reserved through the ramfs copy and the flash write.
+
+Lower vm.min_free_kbytes to 2048 and unload ath11k in
+platform_pre_upgrade, as the stock firmware does before an upgrade
+(kill_plugin_process.sh). The rmmod runs in the background with a 10 s
+limit, so a Q6 that does not stop cannot block the upgrade. Nothing has
+been written at that point; a failure leaves the running slot as it is.
+---
+ .../base-files/lib/upgrade/platform.sh        | 28 +++++++++++++++++++
+ 1 file changed, 28 insertions(+)
+
+diff --git a/target/linux/qualcommax/ipq50xx/base-files/lib/upgrade/platform.sh b/target/linux/qualcommax/ipq50xx/base-files/lib/upgrade/platform.sh
+index 3525e6b408..78b504425f 100644
+--- a/target/linux/qualcommax/ipq50xx/base-files/lib/upgrade/platform.sh
++++ b/target/linux/qualcommax/ipq50xx/base-files/lib/upgrade/platform.sh
+@@ -367,12 +367,40 @@ platform_check_image() {
+ 	esac
+ }
+ 
++xiaomi_redmi_ax3000_pre_upgrade() {
++	local i
++
++	# 256 MiB, and the image already sits in /tmp. Stage 2 has killed
++	# userspace and dropped the caches, but ath11k still holds its DP
++	# rings and /etc/sysctl.d/20-min-free.conf keeps 8 MiB in reserve.
++	# Give both back before the ramfs copy and the flash write, as the
++	# stock firmware does (kill_plugin_process.sh). Nothing has been
++	# written yet: a hang or a crash here leaves the running slot intact.
++	v "$(grep MemAvailable /proc/meminfo) before freeing memory"
++
++	echo 2048 > /proc/sys/vm/min_free_kbytes
++
++	# Unloading ath11k_ahb stops the Q6, do not wait for it forever
++	(rmmod ath11k_ahb && rmmod ath11k) >/dev/null 2>&1 &
++	for i in 1 2 3 4 5 6 7 8 9 10; do
++		grep -q '^ath11k ' /proc/modules || break
++		sleep 1
++	done
++
++	sync
++	echo 3 > /proc/sys/vm/drop_caches
++	v "$(grep MemAvailable /proc/meminfo) after freeing memory"
++}
++
+ platform_pre_upgrade() {
+ 	case "$(board_name)" in
+ 	xiaomi,ax6000|\
+ 	xiaomi,mi-router-ax3000t-v2)
+ 		xiaomi_initramfs_prepare
+ 		;;
++	xiaomi,redmi-ax3000)
++		xiaomi_redmi_ax3000_pre_upgrade
++		;;
+ 	esac
+ }
+ 
+-- 
+2.52.0
+

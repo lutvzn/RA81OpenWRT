@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: lutvzn <106083845+lutvzn@users.noreply.github.com>
 Date: Sat, 17 Oct 2026 00:15:02 -0300
-Subject: [PATCH 3/3] qualcommax: ipq50xx: redmi-ax3000: lower the free memory
+Subject: [PATCH 3/4] qualcommax: ipq50xx: redmi-ax3000: lower the free memory
  floor to 8 MiB
 
 With the NSS region and the Q6 firmware regions reserved, Linux gets
