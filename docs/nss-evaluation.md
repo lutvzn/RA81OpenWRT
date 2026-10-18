@@ -138,13 +138,191 @@ Step 2 of the plan, started 2026-10-16:
 - `tools/validate-images.sh` checks the NSS DT nodes, the Q6 regions, `S19nss`, no
   ath11k autoload, NSS firmware/modules and ECM's DSA patch.
 
-## State left on the router (10.0.0.3) on 2026-10-16
+### First on-device run (2026-10-17, slot 0)
 
-- Test AP: `wireless.default_radio1` = `RA81-iperf`, psk2+ccmp, enabled, radio1
-  enabled (committed). Original config saved at `/tmp/wireless.bak` (lost on reboot).
-  Restore: `cp /tmp/wireless.bak /etc/config/wireless; wifi`, or set
-  `wireless.default_radio1.disabled=1` and restore ssid/encryption.
-- `iperf3` installed in the slot-1 overlay (`apk del iperf3`), server running (`-D`).
-- IRQ 64/65/68-74 affinity set to CPU1 (until reboot).
-- This host's `wlp2s0` was moved to `RA81-iperf`; back with `sudo nmcli con up APT22`.
-- iperf3 installed on this host via Homebrew.
+Installed with `ra81-install-slot.sh` into slot 0 (slot 1 = 25.12 ring-shrink image,
+fallback) as a *trial*: the AP profile plus an overlay `/etc/init.d/xiaomi-dualboot`
+that does not confirm, so any reboot would have gone back to slot 1. Confirmed by
+hand after the tests below (`flag_last_success=0`).
+
+- Boot: up ~40 s after reboot; stmmac/gmac1 SGMII link 1G to QCA8337 port 6; DSA
+  ports on the `qca-8021q` tagger.
+- NSS: `nss core 0 booted successfully` (DDR 0x40000000-0x40800000), `eth0` armed as
+  phys_if 1 (`started`, `rs=3 ts=6`), ECM up, log ends with "NSS wired plane + ECM up
+  (Wi-Fi on the NSS path)"; both radios `nss init soc` (if_num 203/215), no ath11k in
+  `/etc/modules.d`, no flowtable, no kernel errors.
+- Memory: MemTotal 172.9 MB (182 MB on 25.12: 8 MiB NSS region); MemAvailable 29 MB
+  with both radios probed, 22.7 MB with the 5 GHz AP up, ~24 MB after the runs below
+  (25.12 ring-shrink: 56 / 48 MB). Slab 42 MB (NSS pbufs). Tight but stable; the
+  fork's optional `ATH11K_NSS_MEM_PROFILE_256M` is the next thing to try.
+- Port labels verified: the uplink cable is in the jack marked WAN on the case and
+  shows carrier on `wan` (switch port 4 / PHY3), `lan1..3` down - the same mapping as
+  stock and as the 25.12 DTS. The 25.12 note "uplink on lan1" (AGENTS.md) was
+  either taken with the cable in a LAN jack or is wrong; not re-checked on 25.12.
+
+Throughput, **forwarded through the router** (bridged AP role): this host's MT7921 on
+`RA81-iperf` (5 GHz ch36 HE80, -23 dBm, link 1080/648 Mbit/s) -> RA81 -> uplink ->
+LAN switch -> this host's 2.5G USB NIC in a network namespace (macvlan 10.0.0.51,
+`arp_ignore=1` on the NIC so replies cannot bypass the RA81). 20 s runs, router CPU
+from `/proc/stat` over the run:
+
+| Test | NSS (forwarded) | router CPU | 25.12 baseline (router-terminated) |
+|---|---|---|---|
+| upload, 1 stream | 404 Mbit/s | 97 % idle | 397, CPU0 softirq 79 % |
+| upload, 4 streams | 425 | 97 % idle | 466, CPU0 softirq 92 % |
+| download, 1 stream | 580 | 98 % idle | 389, CPU0 softirq 81 % |
+| download, 4 streams | 543 | 97 % idle | 310, CPU0 softirq 99 % |
+
+The router is no longer the bottleneck: the CPU stays ~97 % idle and the rates now
+follow the client's Wi-Fi link (upload at its 648 Mbit/s TX rate). The baselines are
+not the same path (25.12 was measured with the router as the endpoint, which NSS
+would not accelerate); a 25.12 forwarding run on the same bench would make the
+comparison exact. WAN<->LAN NAT (the router role) is not measured yet.
+
+Cold boot (2026-10-17, power pulled ~10 s): slot 0, NSS core booted, phys_if 1
+`started`, both radios on the NSS path, "NSS wired plane + ECM up", no errors. The
+first WPA2 client after it (the case the fork's `0192` clock fix is about) then ran
+download 4 streams 629 Mbit/s and upload 1 stream 500 Mbit/s (link 1201/865) at
+97-98 % idle, NSS still up. MemAvailable 20.9 MB at 8 min, 19.1 MB after the runs
+(18 min) - lower than after the warm boot (22.7-24 MB); watch for a downward trend.
+
+### `ATH11K_NSS_MEM_PROFILE_256M` (2026-10-17, slot 1)
+
+Enabled in `configs/ra81.config` (needs `make package/kernel/mac80211/clean`: the
+option is an `ath.mk` conditional; verified `CPTCFG_ATH11K_NSS_MEM_PROFILE_256M=y` in
+the backports `.config` and a rebuilt `ath11k.ko`). Installed with **sysupgrade** from
+the slot-0 NSS image, config kept, after `wifi down` + `drop_caches` to make room for
+the 15 MB image in /tmp (23 MB available then): slot 1 written, booted, NSS up,
+self-confirmed (`flag_last_success=1`) - the A/B upgrade path works on the NSS line.
+The 25.12 image that was in slot 1 is gone (slot 0 = previous NSS image, fallback).
+
+| | without profile | with profile |
+|---|---|---|
+| MemAvailable, AP up after boot | 22.7 MB | 31.3 MB |
+| SUnreclaim, AP up after boot | ~40 MB | 34.4 MB |
+| MemAvailable after the 4 runs | 24 MB (warm boot) / 19.1 MB (cold boot) | 26.1 MB |
+| SUnreclaim after the 4 runs | 40.4 MB | 41.2 MB |
+| ul 1 / ul 4 / dl 1 / dl 4 (Mbit/s) | 500 / - / - / 629 (link 1201/865) | 546 / 555 / 657 / 652 (link 1201/865) |
+
+No throughput cost, CPU 96-98 % idle. The gain shrinks under load: the slab grows back
+to ~41 MB once the NSS buffer pools fill. The next lever is `vm.min_free_kbytes`
+(OpenWrt sets 16384 on this board, stock 2048; MemAvailable subtracts it).
+
+### `vm.min_free_kbytes` 16384 -> 8192 (2026-10-17, runtime only)
+
+OpenWrt's `/etc/init.d/sysctl` sets 16384 on every board over 64 MB (the RA81 stock
+firmware runs the same script; only its `kill_plugin_process.sh` drops it to 512 in
+an emergency - the "stock uses 2048" in the fork's README is about another board).
+Watermarks min/low/high 16/20/24 MB -> 8/10/12 MB; MemAvailable 25.1 -> 44.0 MB at
+once. With the profile image (slot 1), `sysctl -w vm.min_free_kbytes=8192`:
+
+- 3 rounds of the 4-run bench: ul 467-557, dl 649-666 Mbit/s (same as at 16384),
+  CPU 88-98 % idle, MemAvailable 45-48 MB, no `page allocation failure`.
+- 30 min soak, `iperf3 -P 4 --bidir` through the router: 328 Mbit/s up + 282 down at
+  the same time (127.7 GB moved), MemAvailable 44.0-45.8 MB throughout, SUnreclaim
+  43.8-47.0 MB (+2.5 MB in the last 5 min - watch in a longer soak), 0 allocation
+  failures, 0 errors, NSS `started`, load ~0.0, station `tx failed` 0.
+
+Made persistent in patch 0003: `/etc/uci-defaults/15_min_free_kbytes` writes
+`/etc/sysctl.d/20-min-free.conf` (`vm.min_free_kbytes=8192`) on the RA81 only, at
+first boot, before `/etc/init.d/sysctl` (START=11) applies sysctl.d. Installed by
+sysupgrade into slot 0 (config kept; 53 MB available before copying the image):
+self-confirmed, 8192 applied at boot without manual steps, NSS up, test AP up,
+**MemAvailable 52.1 MB after boot with the AP up** (first NSS image 22.7 MB, with the
+ath11k profile 31.3 MB; 25.12 ring-shrink image 48 MB). 4096 untested.
+
+### 3 h soak at min_free 8192 (2026-10-17)
+
+`tools/soak-mem.sh -d 10800 --load` (one sample per minute over SSH, `iperf3 -P 4
+--bidir` Wi-Fi client -> router -> wired netns for the whole run; slot 0 image with
+patch 0003): 180 samples, 457 GB up (364 Mbit/s) + 346 GB down (275 Mbit/s), 0
+allocation failures, load ~0.0, CPU ~98 % idle.
+
+| Metric | Range |
+|---|---|
+| MemAvailable | 39.9-49.6 MB (47.2 MB at the end) |
+| SUnreclaim | 41.2-50.7 MB (43.4 MB at the end) |
+| `drv_nss_skb_count` | 4381-5751, no trend |
+
+SUnreclaim peaked at 50.7 MB in the first hour and settled at ~43-44 MB: a plateau of
+the NSS pools filling, not a leak. Raw data in `build/soak/` (not in git).
+
+### Router role: WAN<->LAN NAT (2026-10-17, slot 1, generic image)
+
+Generic (no `--files`) image r0+37564-e8dda8ca92 plus a non-confirming overlay
+`/etc/init.d/xiaomi-dualboot`, installed into slot 1 as a trial (`ra81-install-slot.sh`;
+slot 0 = AP image, fallback). Default OpenWrt config: br-lan 192.168.1.1/24 + DHCP,
+`wan` static 172.16.0.2/24 (gw 172.16.0.1), wan zone masquerading. Bench: LAN client =
+this host's Wi-Fi `wlp2s0` on a test AP (5 GHz ch36 HE80, link 1201/865); "internet" =
+`eno1` in a netns (`tools/bench-nat.sh up`, 172.16.0.1, iperf3 server) cabled to the
+WAN jack. 20 s runs with `SERVER=172.16.0.1 ROUTER=192.168.1.1 tools/bench-run.sh`.
+
+| Run (client -> NAT -> server) | Mbit/s | CPU idle (both cores) |
+|---|---|---|
+| ul 1 stream | 512 | 98 % |
+| ul 4 streams | 622 | 98 % |
+| dl 1 stream (-R) | 799 | 98 % |
+| dl 4 streams (-R) | 783 | 98 % |
+
+NAT + routing is offloaded: ECM `tcp_accelerated_count` 1 for the flow, NSS
+`ipv4_rx_pkts` 6.76 M, softirq ~1 %, 0 allocation failures; MemAvailable 51 -> 45 MB
+after the runs (SUnreclaim 45 MB). The Wi-Fi numbers are client-bound (CPU idle).
+
+**Wired LAN client** (RTL8153 USB GbE in a netns, cabled to `lan1`, `tools/bench-wired.sh`;
+same server, same NAT path):
+
+| Run | Mbit/s | CPU idle (both cores) |
+|---|---|---|
+| ul 1 stream | 929 | 99 % |
+| ul 4 streams | 922 | 98 % |
+| dl 1 stream | 930 | 98 % |
+| dl 4 streams | 927 | 98 % |
+
+That is gigabit line rate for TCP goodput (~940 Mbit/s max) in both directions with the
+CPUs idle: the router-role goal (~900 Mbit/s, the single-CPU-port ceiling) is met.
+Not measured: PPPoE (no PPPoE server on the bench).
+
+## To do next (written 2026-10-17)
+
+1. ~~**Router-role test: WAN<->LAN NAT.**~~ done, wired client 922-930 Mbit/s (see "Router role" above; PPPoE still open). Original note: The last big unmeasured item for public users
+   (target ~900 Mbit/s, the single-CPU-port ceiling). Build the generic image (no
+   `--files`), install it into the inactive slot as a trial (overlay with a
+   non-confirming `/etc/init.d/xiaomi-dualboot`, as for the first NSS boot - it
+   changes the router's IP to 192.168.1.1 and turns on a DHCP server, so it must not
+   sit on the home LAN). Bench: a WAN-side host (this host's onboard `eno1`, unused,
+   into the RA81 WAN port, in a netns as "internet" with an iperf3 server) and a
+   LAN-side client on a LAN port or Wi-Fi. Check ECM `tcp_accelerated_count`,
+   `ipv4_rx_pkts` and CPU idle; also PPPoE if possible. Needs sudo (netns) and the
+   owner to move cables.
+2. ~~**Longer soak (a few hours)**~~ done, see "3 h soak" above (plateau, no leak). Original note: SUnreclaim rose 43.8 -> 47.0 MB in
+   the last 5 min of the 30 min soak. Log MemAvailable/SUnreclaim/`drv_nss_skb_count`
+   every minute; a steady climb = leak, a plateau = NSS pools filling.
+3. **Sysupgrade with little free memory.** The image (15 MB) goes to /tmp (RAM). With
+   the 8 MB floor ~36 MB stayed available after copying it, but on a busy router it
+   may not: free memory before the copy automatically (stop Wi-Fi / drop caches in a
+   pre-upgrade hook, as stock's `kill_plugin_process.sh` does), or document it.
+4. **Kernel module repository.** The image lists the OpenWrt snapshot feeds; their
+   kmods are for another kernel (vermagic `93ef0a8c...` vs ours `c700d69b...`) and the
+   `nss` feed URL 404s. Publish our build's kmods (`bin/targets/.../packages`) with each
+   release, e.g. GitHub Pages as kuncy7 does, and point the image's repositories at
+   it (`CONFIG_VERSION_REPO` / feed list).
+
+Smaller, when convenient: 2.4 GHz AP test on the NSS path; press-test reset/mesh
+buttons; optionally `min_free_kbytes` 4096; the second CPU link (GMAC0 -> port 5 for
+WAN, plan step 3); README for the NSS line.
+
+## State left on the router (10.0.0.3) on 2026-10-17
+
+- **Slot 0** (running, confirmed): NSS image with the ath11k NSS 256M profile and
+  patch 0003 (min_free 8192), AP profile, r0+37564-e8dda8ca92. **Slot 1** (fallback):
+  the same without 0003. The 25.12 images are no longer on the flash (restore from
+  `out/v25.12.5-*` with `ra81-install-slot.sh`, or `ra81-backup/`).
+- Test AP `RA81-iperf` on radio1 (5 GHz ch36 HE80, country BR), psk2+ccmp with a random
+  key generated on 2026-10-17 (in the host's NetworkManager profile `RA81-iperf`;
+  `sudo nmcli -s -g 802-11-wireless-security.psk con show RA81-iperf`). Disable with
+  `uci set wireless.default_radio1.disabled=1; uci commit wireless; wifi`.
+- The uplink is in the WAN jack (bridged into br-lan by the AP profile).
+- This host: netns `ra81s` (macvlan on `enp0s20f0u6`, 10.0.0.51, iperf3 server),
+  `arp_ignore=1` on `enp0s20f0u6`, `wlp2s0` on `RA81-iperf`. Undo:
+  `sudo sh tools/bench-netns.sh down`. Runs: `tools/bench-run.sh "<label>" [iperf3
+  args]` (e.g. `-R -P 4`).

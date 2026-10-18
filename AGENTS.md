@@ -42,6 +42,10 @@ unless marked otherwise.
 | `tools/validate-images.sh` | static checks of the outputs (UBI volumes, FIT config/arch, DTB, rootfs, sysupgrade tar) | yes |
 | `.github/workflows/build.yml` | manual GitHub Actions build (variant: generic / files-ap / both), validates, uploads `out/` | yes |
 | `tools/test-dualboot.sh` | runs the shipped dual-boot library against a modelled U-Boot (7 scenarios) | yes |
+| `tools/bench-netns.sh`, `tools/bench-run.sh` | forwarding bench: wired iperf3 server in a netns on this host (sudo) + one run through the RA81 with its CPU/ECM counters | yes |
+| `tools/soak-mem.sh` | memory soak logger: per-minute MemAvailable/SUnreclaim/NSS skb count CSV over SSH, optional iperf3 load | yes |
+| `tools/bench-nat.sh` | router-role bench: moves `eno1` into a netns as the "internet" side (172.16.0.1, iperf3 server) | yes |
+| `tools/bench-wired.sh` | wired-LAN-client NAT bench: a spare NIC in a netns runs iperf3 through the RA81 (sudo) | yes |
 | `docs/nss-evaluation.md` | NSS offload evaluation, throughput measurements, port plan (2026-10-16) | yes |
 | `build/openwrt` | dev/build tree on branch `ra81-25.12` (here a git worktree of `references/openwrt/`; `build.sh` clones a fresh one if missing) | no |
 | `build/stockfw` | stock RA81 1.0.33 firmware + extracted rootfs | no |
@@ -331,10 +335,10 @@ To go back to the old firmware: `fw_setenv flag_last_success 0; reboot`.
 
 ## Remaining tasks / ideas
 
-- **Next (public release needs ~1 Gbit)**: NSS offload by porting the RA81 onto
-  kuncy7/openwrt-nss-edma `c3po-tag-8021q` (6.18.55, stmmac + DSA 8021q tagger);
-  build a WAN/LAN iperf3 bench first. Full plan, measurements and the router state
-  left behind: `docs/nss-evaluation.md`.
+- **NSS line (branch `nss-6.18`)**: ported and running on the router since
+  2026-10-17 (Wi-Fi<->LAN 550-660 Mbit/s at ~97 % CPU idle, MemAvailable 52 MB).
+  **Next steps** (sysupgrade memory, kmod repo, PPPoE NAT test; the 3 h soak and the NAT test (wired 922-930 Mbit/s) are done) and
+  the router state left behind: `docs/nss-evaluation.md`, "To do next".
 
 - Restore the owner's Wi-Fi (SSID/key/channel 100 HE160 from the old config) — needs OK.
 - Press-test reset/mesh buttons; long-term stability with clients; throughput.
