@@ -1,0 +1,56 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: lutvzn <106083845+lutvzn@users.noreply.github.com>
+Date: Sat, 17 Oct 2026 00:15:02 -0300
+Subject: [PATCH 3/3] qualcommax: ipq50xx: redmi-ax3000: lower the free memory
+ floor to 8 MiB
+
+With the NSS region and the Q6 firmware regions reserved, Linux gets
+~173 MiB of the board's 256 MiB. /etc/init.d/sysctl sets
+vm.min_free_kbytes=16384 on every board above 64 MiB, so the kernel keeps
+20-24 MiB idle (low/high watermarks) and MemAvailable stays around
+25 MiB with both radios and the NSS plane up.
+
+Write /etc/sysctl.d/20-min-free.conf with 8192, the value the same
+script uses on 64 MiB boards, on first boot. It is applied after the
+default and stays editable.
+
+Measured with the value set at runtime: MemAvailable 25 -> 44-48 MiB;
+twelve 20 s iperf3 runs and a 30 min bidirectional run (4 streams each
+way, Wi-Fi <-> LAN through the NSS plane, ~610 Mbit/s combined) showed
+no page allocation failures and unchanged throughput.
+---
+ .../etc/uci-defaults/15_min_free_kbytes       | 22 +++++++++++++++++++
+ 1 file changed, 22 insertions(+)
+ create mode 100644 target/linux/qualcommax/ipq50xx/base-files/etc/uci-defaults/15_min_free_kbytes
+
+diff --git a/target/linux/qualcommax/ipq50xx/base-files/etc/uci-defaults/15_min_free_kbytes b/target/linux/qualcommax/ipq50xx/base-files/etc/uci-defaults/15_min_free_kbytes
+new file mode 100644
+index 0000000000..96a19658d0
+--- /dev/null
++++ b/target/linux/qualcommax/ipq50xx/base-files/etc/uci-defaults/15_min_free_kbytes
+@@ -0,0 +1,22 @@
++#!/bin/sh
++
++. /lib/functions.sh
++
++conf=/etc/sysctl.d/20-min-free.conf
++[ -e "$conf" ] && exit 0
++
++case "$(board_name)" in
++xiaomi,redmi-ax3000)
++	# 256 MiB, of which the NSS and Q6 reservations leave ~173 MiB to
++	# Linux. /etc/init.d/sysctl keeps 16 MiB free on every board above
++	# 64 MiB (watermarks 16/20/24 MiB); 8 MiB is its value for 64 MiB
++	# boards and held up under NSS and Wi-Fi offload load.
++	cat > "$conf" <<EOF
++# Free memory floor for this board, applied after /etc/init.d/sysctl's
++# default. Raise it again if "page allocation failure" shows in dmesg.
++vm.min_free_kbytes=8192
++EOF
++	;;
++esac
++
++exit 0
+-- 
+2.52.0
+

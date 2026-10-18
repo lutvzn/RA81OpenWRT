@@ -111,7 +111,8 @@ check "NSS firmware present" "ls '$R'/lib/firmware/ | grep -q '^qca-nss0'"
 check "qca-nss-drv, qca-dwmac-nss, qca-dsa-nss modules" "for m in qca-nss-drv qca-dwmac-nss qca-dsa-nss; do ls '$R'/lib/modules/*/ | grep -q \"^\$m.ko\" || ls '$R'/lib/modules/*/ | grep -q \"^\$(echo \$m | tr - _).ko\" || exit 1; done"
 check "ECM has the DSA port patch (0051)" "grep -qa dsa_port_from_netdev '$R'/lib/modules/*/ecm.ko"
 check "kmod qca8k (DSA) present or builtin" "ls '$R'/lib/modules/*/ | grep -q qca8k || grep -q qca8k '$R'/lib/modules/*/modules.builtin 2>/dev/null || true"
-for s in etc/init.d/xiaomi-dualboot lib/functions/xiaomi-dualboot.sh lib/upgrade/xiaomi-dualboot.sh lib/upgrade/platform.sh lib/preinit/81_xiaomi_dualboot; do
+check "min_free_kbytes override (8192) for the RA81" "grep -q 'vm.min_free_kbytes=8192' '$R/etc/uci-defaults/15_min_free_kbytes'"
+for s in etc/uci-defaults/15_min_free_kbytes etc/init.d/xiaomi-dualboot lib/functions/xiaomi-dualboot.sh lib/upgrade/xiaomi-dualboot.sh lib/upgrade/platform.sh lib/preinit/81_xiaomi_dualboot; do
 	check "sh -n /$s" "sh -n '$R/$s'"
 done
 
