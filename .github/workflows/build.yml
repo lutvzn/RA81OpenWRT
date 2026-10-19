@@ -3,14 +3,6 @@ name: Build firmware
 on:
   workflow_dispatch:
     inputs:
-      variant:
-        description: "Image variant (files-ap = example access-point overlay in configs/files-ap)"
-        type: choice
-        options:
-          - generic
-          - files-ap
-          - both
-        default: generic
       release:
         description: "Publish the images as a GitHub Release"
         type: boolean
@@ -27,7 +19,7 @@ env:
 
 jobs:
   build:
-    name: Build (${{ inputs.variant }})
+    name: Build
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     outputs:
@@ -87,32 +79,24 @@ jobs:
           python3 -m venv build/venv-tools
           build/venv-tools/bin/pip install --quiet ubi_reader
 
-      # Reuse the toolchain and compiled packages for the second image. Validate
-      # each variant before the next build replaces bin/targets outputs.
+      # Only the generic image: overlays such as configs/files-ap are for local builds.
       - name: Build and validate
         env:
-          VARIANT: ${{ inputs.variant }}
           RELEASE: ${{ inputs.release }}
           TAG: ${{ steps.tag.outputs.tag }}
         run: |
-          variants=("$VARIANT")
-          [ "$VARIANT" != both ] || variants=(generic files-ap)
           # Without a release nothing is published, so the image lists no repository.
           repo=()
           [ "$RELEASE" != true ] || repo=(--repo "$PAGES_BASE/$TAG")
-          for variant in "${variants[@]}"; do
-            args=("${repo[@]}")
-            [ "$variant" != files-ap ] || args+=(--files configs/files-ap)
-            scripts/build.sh -j "$(nproc)" "${args[@]}"
-            tools/validate-images.sh
-          done
+          scripts/build.sh -j "$(nproc)" "${repo[@]}"
+          tools/validate-images.sh
           tools/test-dualboot.sh
           "$(sed -n 's/^SRC=//p' patches/BASE)/staging_dir/host/bin/ccache" --show-stats
 
       - name: Upload images
         uses: actions/upload-artifact@v4
         with:
-          name: ra81-openwrt-${{ inputs.variant }}-${{ github.sha }}
+          name: ra81-openwrt-${{ github.sha }}
           path: out/
           if-no-files-found: error
 
@@ -130,10 +114,9 @@ jobs:
       - name: Download images
         uses: actions/download-artifact@v4
         with:
-          pattern: ra81-openwrt-*-${{ github.sha }}
+          pattern: ra81-openwrt-${{ github.sha }}
           path: artifacts
 
-      # Every variant of a run is built in the same tree: one repository serves all.
       - name: Push to gh-pages
         run: |
           set -euo pipefail
@@ -187,29 +170,20 @@ jobs:
       - name: Download images
         uses: actions/download-artifact@v4
         with:
-          pattern: ra81-openwrt-*-${{ github.sha }}
+          pattern: ra81-openwrt-${{ github.sha }}
           path: artifacts
 
       - name: Collect release assets
         id: assets
         run: |
           mkdir -p release
-          for dir in artifacts/*/*/; do
-            variant=generic
-            case "$dir" in *-files-ap/) variant=files-ap ;; esac
-            for f in "$dir"*xiaomi_redmi-ax3000*; do
-              name=$(basename "$f")
-              [ "$variant" = generic ] || name=${name/xiaomi_redmi-ax3000/xiaomi_redmi-ax3000-$variant}
-              cp "$f" "release/$name"
-            done
-          done
+          cp artifacts/*/*/*xiaomi_redmi-ax3000* release/
           (cd release && sha256sum -- ./* | sed 's# \./# #') > sha256sums
           mv sha256sums release/
           cat release/sha256sums
-          # Output dir name, e.g. v25.12.5-r33051-f5dae5ece4[-files-ap]
+          # Output dir name, e.g. nss-2026.10.15-2-r0+37565-3701f3e36f-c8c05dd31
           dirs=(artifacts/*/*/)
           version=$(basename "${dirs[0]}")
-          version=${version%-files-ap}
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Create release
@@ -229,9 +203,6 @@ jobs:
             echo "| \`*-squashfs-factory.ubi\` | first install into a dual-boot slot (\`scripts/ra81-install-slot.sh\`) |"
             echo "| \`*-squashfs-sysupgrade.bin\` | upgrade from this firmware (\`sysupgrade\`) |"
             echo "| \`*-initramfs-uImage.itb\` | RAM boot via U-Boot TFTP (UART) |"
-            echo
-            echo "Files with \`-files-ap\` in the name contain the example access-point overlay"
-            echo "(\`configs/files-ap\`: 10.0.0.3/23, no DHCP server) — only for networks that match it."
             echo
             echo "Packages: \`apk update && apk add kmod-<name>\` installs the kernel modules of"
             echo "this build from its own repository, which the image already lists:"

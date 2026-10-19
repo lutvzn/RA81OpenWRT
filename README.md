@@ -128,19 +128,19 @@ or to use `--clean`. A tree that already matches `patches/` (as after
 ### Building on GitHub Actions
 
 If you fork or push this repository to GitHub, go to **Actions → Build firmware → Run
-workflow** and choose the variant (`generic`, `files-ap` or `both`). The job:
+workflow**. It builds the generic image only; the access-point profile below is for
+local builds (`--files`). The job:
 
 1. runs `scripts/build.sh` on an Ubuntu 24.04 runner (a cold build takes about
-   1.5–2.5 hours; downloaded sources and compiler results are cached between runs).
-   With `both`, the variants share one build tree: the toolchain and packages are
-   compiled once, and each variant is validated before building the next;
+   1.5–2.5 hours; downloaded sources and compiler results are cached between runs);
 2. runs `tools/validate-images.sh` and `tools/test-dualboot.sh` and fails if any check
    fails;
 3. uploads `out/` as a workflow artifact;
 4. **publishes a GitHub Release** (tag `ra81-<openwrt version>-run<N>`) with the
-   images and a combined `sha256sums`. Images of the `files-ap` variant carry
-   `-files-ap` in their names. Untick "Publish the images as a GitHub Release" to
-   skip this step.
+   images and a combined `sha256sums`, and the build's package repository (kernel
+   modules for `apk add`) on the `gh-pages` branch under the same tag, which the image
+   lists. Enable GitHub Pages for `gh-pages` after the first release. Untick "Publish
+   the images as a GitHub Release" to skip this step.
 
 ### Access-point profile (example)
 

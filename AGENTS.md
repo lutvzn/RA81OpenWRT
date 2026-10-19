@@ -43,7 +43,7 @@ unless marked otherwise.
 | `tools/bd-*.py` | board-2.bin list/extract/encode (encoder is byte-identical to ath11k-bdencoder) | yes |
 | `tools/uboot-xref.py` | Thumb-2 disassembly around string xrefs in the U-Boot ELF | yes |
 | `tools/validate-images.sh` | static checks of the outputs (UBI volumes, FIT config/arch, DTB, rootfs, sysupgrade tar) | yes |
-| `.github/workflows/build.yml` | manual GitHub Actions build (variant: generic / files-ap / both), validates, uploads `out/` | yes |
+| `.github/workflows/build.yml` | manual GitHub Actions build (generic image only), validates, uploads `out/`, publishes the release and its package repository (gh-pages) | yes |
 | `tools/test-dualboot.sh` | runs the shipped dual-boot library against a modelled U-Boot (7 scenarios) | yes |
 | `tools/bench-netns.sh`, `tools/bench-run.sh` | forwarding bench: wired iperf3 server in a netns on this host (sudo) + one run through the RA81 with its CPU/ECM counters | yes |
 | `tools/soak-mem.sh` | memory soak logger: per-minute MemAvailable/SUnreclaim/NSS skb count CSV over SSH, optional iperf3 load | yes |
