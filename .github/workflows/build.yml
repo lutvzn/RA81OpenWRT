@@ -19,11 +19,19 @@ on:
 permissions:
   contents: read
 
+env:
+  # Each release's package repository (kmods and the other =m packages of that
+  # build) is published on the gh-pages branch under <tag>/; the image lists it.
+  PAGES_BASE: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}
+  KEEP: "10"                     # package repositories kept on gh-pages
+
 jobs:
   build:
     name: Build (${{ inputs.variant }})
     runs-on: ubuntu-24.04
     timeout-minutes: 360
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
 
     steps:
       - name: Free disk space
@@ -67,6 +75,13 @@ jobs:
             ccache-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('patches/BASE', 'configs/ra81.config') }}-
             ccache-${{ runner.os }}-${{ runner.arch }}-
 
+      # Known before the build: the image carries the URL of its repository.
+      - name: Release tag
+        id: tag
+        run: |
+          label=$(sed -n 's/^OPENWRT_LABEL=//p' patches/BASE)
+          echo "tag=ra81-${label}-run${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+
       - name: Prepare validation tools
         run: |
           python3 -m venv build/venv-tools
@@ -77,17 +92,22 @@ jobs:
       - name: Build and validate
         env:
           VARIANT: ${{ inputs.variant }}
+          RELEASE: ${{ inputs.release }}
+          TAG: ${{ steps.tag.outputs.tag }}
         run: |
           variants=("$VARIANT")
           [ "$VARIANT" != both ] || variants=(generic files-ap)
+          # Without a release nothing is published, so the image lists no repository.
+          repo=()
+          [ "$RELEASE" != true ] || repo=(--repo "$PAGES_BASE/$TAG")
           for variant in "${variants[@]}"; do
-            args=()
-            [ "$variant" != files-ap ] || args=(--files configs/files-ap)
+            args=("${repo[@]}")
+            [ "$variant" != files-ap ] || args+=(--files configs/files-ap)
             scripts/build.sh -j "$(nproc)" "${args[@]}"
             tools/validate-images.sh
           done
           tools/test-dualboot.sh
-          build/openwrt/staging_dir/host/bin/ccache --show-stats
+          "$(sed -n 's/^SRC=//p' patches/BASE)/staging_dir/host/bin/ccache" --show-stats
 
       - name: Upload images
         uses: actions/upload-artifact@v4
@@ -96,9 +116,66 @@ jobs:
           path: out/
           if-no-files-found: error
 
+  pages:
+    name: Publish package repository
+    needs: build
+    if: inputs.release
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ needs.build.outputs.tag }}
+    steps:
+      - name: Download images
+        uses: actions/download-artifact@v4
+        with:
+          pattern: ra81-openwrt-*-${{ github.sha }}
+          path: artifacts
+
+      # Every variant of a run is built in the same tree: one repository serves all.
+      - name: Push to gh-pages
+        run: |
+          set -euo pipefail
+          repos=(artifacts/*/*/packages)
+          repo=$(cd "${repos[0]}" && pwd)
+          [ -f "$repo/packages.adb" ] || { echo "::error::no package index"; exit 1; }
+          compgen -G "$repo/kernel-*.apk" >/dev/null || { echo "::error::no kernel package"; exit 1; }
+          compgen -G "$repo/kmod-wireguard-*.apk" >/dev/null || { echo "::error::kmod-wireguard missing"; exit 1; }
+          mkdir site && cd site
+          git init -q
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          if git fetch -q --depth=1 origin gh-pages 2>/dev/null; then
+            git checkout -q FETCH_HEAD -- .
+          fi
+          rm -rf "$TAG"
+          cp -a "$repo" "$TAG"
+          # Repositories, oldest first (by run number); keep the newest $KEEP.
+          by_run() { for d in ra81-*-run*; do [ -d "$d" ] || continue; echo "${d##*-run} $d"; done | sort -n | cut -d' ' -f2; }
+          by_run | head -n -"$KEEP" | xargs -r rm -rf --
+          touch .nojekyll
+          {
+            echo "# RA81 OpenWrt package repositories"
+            echo
+            echo "One directory per release of \`${GITHUB_REPOSITORY}\`: the kernel modules and"
+            echo "other packages of that build. They only install on an image of the same"
+            echo "release, which lists its directory in \`/etc/apk/repositories.d/distfeeds.list\`."
+            echo
+            for d in $(by_run | tac); do
+              echo "- [${d}](${d}/packages.adb), [release](https://github.com/${GITHUB_REPOSITORY}/releases/tag/${d})"
+            done
+          } > index.md
+          git add -A
+          # One commit, no history: old repositories are not kept in the branch.
+          git checkout -q --orphan gh-pages-new
+          git -c user.name=github-actions -c user.email=github-actions@users.noreply.github.com \
+            commit -qm "package repositories, newest ${TAG}"
+          git push -q --force origin gh-pages-new:gh-pages
+          echo "published ${PAGES_BASE}/${TAG}/packages.adb ($(find "$repo" -name '*.apk' | wc -l) packages)" >> "$GITHUB_STEP_SUMMARY"
+
   release:
     name: Publish release
-    needs: build
+    needs: [build, pages]
     if: inputs.release
     runs-on: ubuntu-24.04
     permissions:
@@ -134,12 +211,11 @@ jobs:
           version=$(basename "${dirs[0]}")
           version=${version%-files-ap}
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "tag=ra81-$version-run${{ github.run_number }}" >> "$GITHUB_OUTPUT"
 
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.assets.outputs.tag }}
+          TAG: ${{ needs.build.outputs.tag }}
           VERSION: ${{ steps.assets.outputs.version }}
         run: |
           {
@@ -156,6 +232,11 @@ jobs:
             echo
             echo "Files with \`-files-ap\` in the name contain the example access-point overlay"
             echo "(\`configs/files-ap\`: 10.0.0.3/23, no DHCP server) — only for networks that match it."
+            echo
+            echo "Packages: \`apk update && apk add kmod-<name>\` installs the kernel modules of"
+            echo "this build from its own repository, which the image already lists:"
+            echo "\`$PAGES_BASE/$TAG/packages.adb\`. Kernel modules from other builds or from"
+            echo "downloads.openwrt.org do not load on this kernel."
             echo
             echo "**Only for the RA81.** Read the README (install, recovery, limitations) before flashing."
             echo

@@ -8,7 +8,10 @@
 set -u
 
 TOP=$(cd "$(dirname "$0")/.." && pwd)
-LIB=${1:-$TOP/build/openwrt/target/linux/qualcommax/ipq50xx/base-files/lib/functions/xiaomi-dualboot.sh}
+# Default: the build tree named in patches/BASE, as scripts/build.sh uses it
+SRC=${SRC:-$(sed -n 's/^SRC=//p' "$TOP/patches/BASE")}
+case "$SRC" in /*) ;; *) SRC=$TOP/${SRC:-build/openwrt} ;; esac
+LIB=${1:-$SRC/target/linux/qualcommax/ipq50xx/base-files/lib/functions/xiaomi-dualboot.sh}
 T=$(mktemp -d)
 trap 'rm -rf "$T"' EXIT
 

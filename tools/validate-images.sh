@@ -5,7 +5,10 @@
 set -uo pipefail
 
 TOP=$(cd "$(dirname "$0")/.." && pwd)
-BIN=${1:-${SRC:-$TOP/build/openwrt}/bin/targets/qualcommax/ipq50xx}
+# Default: the build tree named in patches/BASE, as scripts/build.sh uses it
+SRC=${SRC:-$(sed -n 's/^SRC=//p' "$TOP/patches/BASE")}
+case "$SRC" in /*) ;; *) SRC=$TOP/${SRC:-build/openwrt} ;; esac
+BIN=${1:-$SRC/bin/targets/qualcommax/ipq50xx}
 VENV=$TOP/build/venv-tools/bin
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT

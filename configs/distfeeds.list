@@ -1,0 +1,13 @@
+# Package feeds of this image (installed by scripts/build.sh as
+# /etc/apk/repositories.d/distfeeds.list; add your own feeds to customfeeds.list).
+# A release lists its own package repository first (build.sh --repo; local
+# builds have none): kernel modules only install on an image from the same
+# build, so the official kmods and target feeds are not listed. The official
+# userspace feeds follow; the nss feed has no published packages.
+@REPO@
+https://downloads.openwrt.org/snapshots/packages/aarch64_cortex-a53/base/packages.adb
+https://downloads.openwrt.org/snapshots/packages/aarch64_cortex-a53/luci/packages.adb
+https://downloads.openwrt.org/snapshots/packages/aarch64_cortex-a53/packages/packages.adb
+https://downloads.openwrt.org/snapshots/packages/aarch64_cortex-a53/routing/packages.adb
+https://downloads.openwrt.org/snapshots/packages/aarch64_cortex-a53/telephony/packages.adb
+https://downloads.openwrt.org/snapshots/packages/aarch64_cortex-a53/video/packages.adb

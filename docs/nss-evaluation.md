@@ -330,11 +330,52 @@ Not measured: PPPoE (no PPPoE server on the bench).
    host key kept, MemAvailable 54.8 MB, 0 allocation failures/OOM/driver errors in
    dmesg. The hook's own log lines were not visible (no UART). The generic trial image
    that was in slot 1 is gone (see #5 (b)).
-4. **Kernel module repository.** The image lists the OpenWrt snapshot feeds; their
-   kmods are for another kernel (vermagic `93ef0a8c...` vs ours `c700d69b...`) and the
-   `nss` feed URL 404s. Publish our build's kmods (`bin/targets/.../packages`) with each
-   release, e.g. GitHub Pages as kuncy7 does, and point the image's repositories at
-   it (`CONFIG_VERSION_REPO` / feed list).
+4. **Kernel module repository** (done locally 2026-10-18; CI publishing written, not
+   yet run). Before: the image listed the snapshot target and `nss` feeds (the `nss`
+   one fails, "unexpected end of file") and no kmods feed; `apk add kmod-wireguard` ->
+   "no such package", and snapshot kmods would not load on our kernel anyway.
+   - `configs/ra81.config`: 16 extra packages as `=m` (in the repository, not the
+     image): wireguard, tun, gre, vxlan, l2tp, bonding, nft-queue/socket/tproxy,
+     inet-diag, netlink-diag, sched-cake, fs-nfs, fs-cifs, nls-utf8 and
+     `luci-app-nss` (kuncy7's `kmods-extra.config` without USB/local-disk modules,
+     plus NFS/CIFS and cake). kmod-gre/l2tp also build the GRE/L2TPv2 handlers into
+     `qca-nss-drv`, as in the fork's releases.
+   - `configs/distfeeds.list` -> the image's `/etc/apk/repositories.d/distfeeds.list`
+     (`scripts/build.sh`): `@REPO@` (= `build.sh --repo URL`, dropped without it),
+     then the official snapshot base/luci/packages/routing/telephony/video feeds.
+   - `build.sh` copies the target repository (plus the `=m` non-kmod packages,
+     re-indexed, signed with the build key) to `out/<dir>/packages/` (117 packages,
+     3.9 MB), drops kmods the config no longer selects (`bin/` is never cleaned), and
+     names `out/` dirs `<label>-<rev>-c<config id>` so a config change no longer
+     overwrites an earlier build.
+   - CI (`.github/workflows/build.yml`): tag `ra81-<label>-run<N>` fixed before the
+     build; with `release`, the image gets `--repo
+     https://<owner>.github.io/<repo>/<tag>`; job `pages` pushes `packages/` to
+     gh-pages `<tag>/` (one orphan commit, newest 10 kept, `index.md`); the release
+     waits for it. Needs GitHub Pages enabled on the gh-pages branch (repository
+     settings) once the branch exists. Also fixed: the `build/openwrt` paths in the
+     workflow, `validate-images.sh` and `test-dualboot.sh` (they now read `SRC` from
+     `patches/BASE`).
+   - **Boot crash on the way (2026-10-17/18):** the first image with the `=m` list
+     died ~20-30 s into boot (after preinit's arm, before networking) - 3 trials, each
+     rolled back by U-Boot (`flag_boot_success=0` left behind, seen with slot 1's
+     confirm disabled). A control sysupgrade of the old image into the same slot
+     booted, so not the upgrade path. Cause: `kmod-vxlan`/`kmod-wireguard` enable
+     `CONFIG_NET_UDP_TUNNEL`, which adds a field to `struct netns_ipv4` and shifts
+     `struct net`; OpenWrt rebuilt the in-tree modules but not the out-of-tree kmod
+     packages (mac80211 backports, NSS clients/ECM, dsa/dwmac, switch drivers, built
+     on 10-16), so `ecm.ko` ran with the old layout. Fix in `build.sh`:
+     `.ra81-vermagic` records the kernel they were built against; on a change it
+     runs `make <dir>/clean` for every selected out-of-tree kmod package and builds
+     again (tested in `tools/test-build.sh`). CI builds from scratch and never hit it.
+   - **On the router (2026-10-18, slot 1, `out/...-c8c05dd31-files-ap`, sha256
+     `b465e42e...`):** sysupgrade from slot 0, self-confirmed, NSS core booted, "NSS
+     wired plane + ECM up", test AP up, MemAvailable 53 MB, no oops/allocation
+     failures. Repository copied to the router's /tmp: `apk add --repository
+     /tmp/repo/packages.adb kmod-wireguard` installed it and 7 dependencies (signature
+     trusted, no `--allow-untrusted`), `modprobe wireguard` loaded, `ip link add
+     wgtest type wireguard` worked; `luci-app-nss` resolves. Removed again afterwards.
+     Not tested: fetching over HTTP from gh-pages (no publish yet).
 
 5. **PPPoE test (do later; estimate 1.5-2 h hands-on, +1 h with a soak).** Nothing has
    been run with PPPoE on the RA81. Why it may fail (from kuncy7's history, all fixes
@@ -382,12 +423,13 @@ Smaller, when convenient: 2.4 GHz AP test on the NSS path; press-test reset/mesh
 buttons; optionally `min_free_kbytes` 4096; the second CPU link (GMAC0 -> port 5 for
 WAN, plan step 3); README for the NSS line.
 
-## State left on the router (10.0.0.3) on 2026-10-17
+## State left on the router (10.0.0.3) on 2026-10-18
 
-- **Slot 1** (running, confirmed, since the sysupgrade test of 2026-10-17 23:17):
-  NSS AP image with patches 0001-0004 (ath11k NSS 256M profile, min_free 8192,
-  pre-upgrade hook), r0+37565-3701f3e36f. **Slot 0** (fallback): the same without
-  0004, r0+37564-e8dda8ca92. The generic trial image is no longer on the flash. The 25.12 images are no longer on the flash (restore from
+- **Slot 1** (running, confirmed, since 2026-10-18 01:59): NSS AP image with patches
+  0001-0004 and the `=m` package list (kernel `~9a0ce504...`, feed list from
+  `configs/distfeeds.list`), `out/nss-2026.10.15-2-r0+37565-3701f3e36f-c8c05dd31-files-ap`.
+  **Slot 0** (fallback): generic image r0+37564-e8dda8ca92 (no 0004) with the kept AP
+  config. The generic trial image is no longer on the flash. The 25.12 images are no longer on the flash (restore from
   `out/v25.12.5-*` with `ra81-install-slot.sh`, or `ra81-backup/`).
 - Test AP `RA81-iperf` on radio1 (5 GHz ch36 HE80, country BR), psk2+ccmp with a random
   key generated on 2026-10-17 (in the host's NetworkManager profile `RA81-iperf`;

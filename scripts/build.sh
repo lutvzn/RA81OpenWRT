@@ -1,15 +1,23 @@
 #!/bin/bash
 # Reproducible build of OpenWrt for the Xiaomi Redmi AX3000 (RA81).
 #
-#   scripts/build.sh [-j N] [--clean] [--update-feeds] [--files DIR]
+#   scripts/build.sh [-j N] [--clean] [--update-feeds] [--files DIR] [--repo URL]
 #
 # --files DIR  overlay copied into the image root (OpenWrt "files/"), e.g.
 #              configs/files-ap for the 10.0.0.3 access-point profile.
+# --repo URL   where this build's package repository will be published
+#              (URL/packages.adb); the image lists it first. The repository
+#              (kmods and the other =m packages) is copied to out/<dir>/packages/
+#              with or without this option.
 #
 # Creates/updates $SRC (a clone of $OPENWRT_URL), puts the pinned ref +
 # patches/*.patch on branch $BRANCH (all four from patches/BASE), installs the
 # feeds (pinned in configs/feeds.conf, if present), applies configs/ra81.config
-# and builds. Results are copied to out/<label>-<revision>/ with sha256sums.
+# and builds. configs/distfeeds.list, if present, becomes the image's
+# /etc/apk/repositories.d/distfeeds.list (@REPO@ -> --repo, or dropped).
+# Results are copied to out/<label>-<revision>-c<config id>/ with sha256sums;
+# the id hashes the config, the feed list and --repo, which change the image
+# without a new revision.
 # The same tree is used for development: commit on the branch, then
 # scripts/export-patches.sh. Unexported commits are never discarded (except
 # with --clean).
@@ -38,6 +46,7 @@ JOBS=$(nproc)
 CLEAN=
 UPDATE_FEEDS=
 FILES=
+REPO=
 
 while [ $# -gt 0 ]; do
 	case "$1" in
@@ -46,7 +55,8 @@ while [ $# -gt 0 ]; do
 	--clean) CLEAN=1 ;;
 	--update-feeds) UPDATE_FEEDS=1 ;;
 	--files) FILES=$(cd "$2" && pwd); shift ;;
-	*) echo "usage: $0 [-j N] [--clean] [--update-feeds] [--files DIR]" >&2; exit 2 ;;
+	--repo) REPO=${2%/}; shift ;;
+	*) echo "usage: $0 [-j N] [--clean] [--update-feeds] [--files DIR] [--repo URL]" >&2; exit 2 ;;
 	esac
 	shift
 done
@@ -137,6 +147,15 @@ fi
 
 rm -rf files
 [ -n "$FILES" ] && cp -a "$FILES" files
+if [ -f "$TOP/configs/distfeeds.list" ]; then
+	mkdir -p files/etc/apk/repositories.d
+	if [ -n "$REPO" ]; then
+		sed "s|^@REPO@\$|$(printf '%s' "$REPO" | sed 's/[&|\\]/\\&/g')/packages.adb|" \
+			"$TOP/configs/distfeeds.list"
+	else
+		sed '/^@REPO@$/d' "$TOP/configs/distfeeds.list"
+	fi > files/etc/apk/repositories.d/distfeeds.list
+fi
 
 cp "$TOP/configs/ra81.config" .config
 if [ "${USE_CCACHE:-1}" = 1 ]; then
@@ -146,15 +165,64 @@ fi
 make defconfig
 
 make -j"$JOBS" download
+# Kernel modules built outside the kernel tree (mac80211 backports, NSS, ...)
+# are not rebuilt when only the kernel configuration changes, e.g. after an
+# =m kmod adds kernel options: they keep the old struct layouts (a new
+# CONFIG_NET_UDP_TUNNEL shifts struct net) and crash at load. .ra81-vermagic
+# records the kernel they were built against; on a change, clean them and
+# build again. A tree built before this check is cleaned once.
+vermagic() { cat build_dir/target-*/linux-*/linux-[0-9]*/.vermagic 2>/dev/null || true; }
+BUILT_FOR=$(cat .ra81-vermagic 2>/dev/null || true)
+[ -n "$BUILT_FOR" ] || [ -z "$(vermagic)" ] || BUILT_FOR=unknown
 make -j"$JOBS" || make -j1 V=s
+if [ -n "$BUILT_FOR" ] && [ "$(vermagic)" != "$BUILT_FOR" ]; then
+	echo ">>> Kernel configuration changed: rebuilding the out-of-tree kernel modules"
+	for dir in $(awk '/^Source-Makefile:/ { mk = $2 }
+		/^Package: kmod-/ { print $2, mk }' tmp/.packageinfo |
+		while read -r pkg mk; do
+			case "$mk" in package/kernel/linux/*) continue ;; esac
+			grep -qxE "CONFIG_PACKAGE_$pkg=[ym]" .config && dirname "$mk"
+		done | sort -u); do
+		make "$dir/clean"
+	done
+	make -j"$JOBS" || make -j1 V=s
+fi
+vermagic > .ra81-vermagic
+
+# The target repository holds the kmods. bin/ is not cleaned between builds:
+# drop kmods the config no longer selects (built for an earlier kernel, they
+# would not install on this one), add the other =m packages (built into the
+# feed directories, which are not published) and index it again.
+BIN=bin/targets/qualcommax/ipq50xx
+changed=
+for f in "$BIN"/packages/kmod-*.apk; do
+	[ -f "$f" ] || continue
+	pkg=$(basename "$f" .apk)
+	pkg=${pkg%-r[0-9]*}
+	pkg=${pkg%-*}
+	grep -qxF -e "CONFIG_PACKAGE_$pkg=y" -e "CONFIG_PACKAGE_$pkg=m" .config && continue
+	rm -f "$f"
+	changed=1
+done
+for pkg in $(sed -n 's/^CONFIG_PACKAGE_\(.*\)=m$/\1/p' .config); do
+	case "$pkg" in kmod-*) continue ;; esac
+	for f in bin/packages/*/*/"$pkg"-[0-9]*.apk; do
+		[ -f "$f" ] && cp "$f" "$BIN/packages/" && changed=1
+	done
+done
+[ -z "$changed" ] || make package/index
 
 VERSION=$(./scripts/getver.sh 2>/dev/null || echo unknown)
-OUT=$TOP/out/$OPENWRT_LABEL-$VERSION${FILES:+-$(basename "$FILES")}
+CFG_ID=$( { cat "$TOP/configs/ra81.config"
+	[ ! -f "$TOP/configs/distfeeds.list" ] || cat "$TOP/configs/distfeeds.list"
+	echo "$REPO"; } | sha256sum | cut -c1-8)
+OUT=$TOP/out/$OPENWRT_LABEL-$VERSION-c$CFG_ID${FILES:+-$(basename "$FILES")}
 mkdir -p "$OUT"
-BIN=bin/targets/qualcommax/ipq50xx
 cp "$BIN"/*xiaomi_redmi-ax3000* "$BIN"/*.manifest "$BIN"/profiles.json "$OUT"/ 2>/dev/null || true
 cp .config "$OUT/config.full"
 (cd "$OUT" && sha256sum -- *xiaomi_redmi-ax3000* > sha256sums)
+rm -rf "$OUT/packages"
+[ ! -d "$BIN/packages" ] || cp -a "$BIN/packages" "$OUT/packages"
 echo ">>> Images in $OUT"
 ls -la "$OUT"
 exit 0

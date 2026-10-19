@@ -14,7 +14,7 @@ unless marked otherwise.
 > tagger), pinned in `patches/BASE`; feeds pinned in `configs/feeds.conf` to that
 > release's `feeds-256m.buildinfo`. Dev tree `build/openwrt-nss` (worktree of
 > `references/openwrt-nss-edma`), branch `ra81-nss`; outputs in
-> `out/nss-2026.10.15-2-<rev>/`. Patches: 0001 = device port (DTS in
+> `out/nss-2026.10.15-2-<rev>-c<config id>/` (with `packages/`, this build's apk repository). Patches: 0001 = device port (DTS in
 > `target/linux/qualcommax/dts/`, `gmac1`+`uniphy0`, `ipq5018-nss.dtsi`, 8 MiB
 > `nss_region`, mode-2 multi-PD Q6 layout of the AX3000T v2, BDFs in
 > `ipq-wifi/files/`), 0002 = revert of the fork's debug-aids commit (no
@@ -33,6 +33,7 @@ unless marked otherwise.
 | `patches/` | OpenWrt patch series on top of the tree named in `patches/BASE` (URL, ref, label, dev tree, branch) | yes |
 | `configs/ra81.config` | diffconfig (target, device, LuCI, initramfs) | yes |
 | `configs/feeds.conf` | pinned feeds, copied into the tree (NSS line only) | yes |
+| `configs/distfeeds.list` | the image's apk feed list (`@REPO@` = `build.sh --repo`; NSS line only) | yes |
 | `configs/files-ap/` | optional first-boot overlay: this unit's AP role (10.0.0.3/23, no DHCP) | yes |
 | `scripts/build.sh` | reproducible build, also the dev build: `patches/BASE` ref + `git am` patches on its branch, feeds, build, copy to `out/` | yes |
 | `scripts/export-patches.sh` | `git format-patch` the dev tree's commits into `patches/` | yes |
@@ -61,7 +62,9 @@ Development workflow (same as in the README, so contributors get the same tree):
 edit in `build/openwrt` (branch `ra81-25.12`), commit, build with `scripts/build.sh`,
 then `scripts/export-patches.sh` and commit `patches/`. Do not run `make` by hand for
 images: `build.sh` also rewrites `.config` from `configs/ra81.config`, sets up
-ccache/`dl`, and sets `files/` (removed unless `--files` is given). `build.sh` never
+ccache/`dl`, sets `files/` (removed unless `--files` is given; the feed list from
+`configs/distfeeds.list` is added), and cleans and rebuilds the out-of-tree kmod packages
+when the kernel's vermagic changes (`.ra81-vermagic`; OpenWrt does not). `build.sh` never
 discards unexported commits on the branch (only `--clean` does); a tree whose commits
 match `patches/` by patch-id is kept as is.
 
@@ -75,6 +78,7 @@ system Python (`/usr/bin/python3`, 3.12) — `scripts/build.sh` puts `/usr/bin` 
 scripts/build.sh                            # generic image (192.168.1.1, DHCP server on LAN)
 scripts/build.sh --files configs/files-ap   # this unit's AP profile (see below)
 scripts/build.sh --clean                    # discard local changes/unexported commits, re-apply patches
+scripts/build.sh --repo URL                 # image lists URL/packages.adb (where the release's out/<dir>/packages/ is published)
 scripts/export-patches.sh                   # dev tree commits -> patches/
 tools/test-build.sh                         # wrapper tests (no compile, no network)
 SRC=build/openwrt-repro OPENWRT_URL=$PWD/references/openwrt scripts/build.sh   # build in another tree
@@ -339,7 +343,7 @@ To go back to the old firmware: `fw_setenv flag_last_success 0; reboot`.
 
 - **NSS line (branch `nss-6.18`)**: ported and running on the router since
   2026-10-17 (Wi-Fi<->LAN 550-660 Mbit/s at ~97 % CPU idle, MemAvailable 52 MB).
-  **Next steps** (sysupgrade memory done: hook in patch 0004, frees 49.7 -> 108 MB, full sysupgrade to slot 1 passed; next: kmod repo, PPPoE NAT test (plan and risks written down: `docs/nss-evaluation.md` "To do next" #5); the 3 h soak and the NAT test (wired 922-930 Mbit/s) are done) and
+  **Next steps** (sysupgrade memory done: hook in patch 0004, frees 49.7 -> 108 MB, full sysupgrade to slot 1 passed; kmod repo done locally (`=m` list, `build.sh --repo`, CI gh-pages job written but not run; out-of-tree kmods rebuilt on a vermagic change, see "To do next" #4); next: first CI release, PPPoE NAT test (plan and risks written down: `docs/nss-evaluation.md` "To do next" #5); the 3 h soak and the NAT test (wired 922-930 Mbit/s) are done) and
   the router state left behind: `docs/nss-evaluation.md`, "To do next".
 
 - Restore the owner's Wi-Fi (SSID/key/channel 100 HE160 from the old config) — needs OK.
