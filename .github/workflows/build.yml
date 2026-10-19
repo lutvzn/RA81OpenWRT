@@ -20,7 +20,7 @@ env:
 jobs:
   build:
     name: Build
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 360
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
@@ -93,6 +93,19 @@ jobs:
           tools/test-dualboot.sh
           "$(sed -n 's/^SRC=//p' patches/BASE)/staging_dir/host/bin/ccache" --show-stats
 
+      # What the build saw, for failures in the host tools (e.g. a tool that is
+      # installed but does not run).
+      - name: Show build environment on failure
+        if: failure()
+        run: |
+          env | sort
+          cd "$(sed -n 's/^SRC=//p' patches/BASE)" || exit 0
+          for t in autoconf automake m4 perl; do
+            echo "== $t"; ls -la "staging_dir/host/bin/$t" || continue
+            [ "$t" = perl ] || head -1 "staging_dir/host/bin/$t"
+            "staging_dir/host/bin/$t" --version 2>&1 | head -3
+          done
+
       - name: Upload images
         uses: actions/upload-artifact@v4
         with:
@@ -104,7 +117,7 @@ jobs:
     name: Publish package repository
     needs: build
     if: inputs.release
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       contents: write
     env:
@@ -160,7 +173,7 @@ jobs:
     name: Publish release
     needs: [build, pages]
     if: inputs.release
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       contents: write
     steps:

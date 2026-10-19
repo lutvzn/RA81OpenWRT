@@ -46,7 +46,7 @@ Requirements: a Linux host with the
 [OpenWrt build prerequisites](https://openwrt.org/docs/guide-developer/toolchain/install-buildsystem),
 ~15 GB of disk space and network access. Use the distribution's Python (the build
 script puts `/usr/bin` first in `PATH`). Builds are tested on Oracle Linux 10 and on
-Ubuntu 24.04 (GitHub Actions). A first build takes about 1–2 hours (it builds the
+Ubuntu 26.04 (GitHub Actions). A first build takes about 1–2 hours (it builds the
 toolchain); later builds take minutes.
 
 ```sh
@@ -131,7 +131,7 @@ If you fork or push this repository to GitHub, go to **Actions → Build firmwar
 workflow**. It builds the generic image only; the access-point profile below is for
 local builds (`--files`). The job:
 
-1. runs `scripts/build.sh` on an Ubuntu 24.04 runner (a cold build takes about
+1. runs `scripts/build.sh` on an Ubuntu 26.04 runner, like the base tree's own CI (a cold build takes about
    1.5–2.5 hours; downloaded sources and compiler results are cached between runs);
 2. runs `tools/validate-images.sh` and `tools/test-dualboot.sh` and fails if any check
    fails;
