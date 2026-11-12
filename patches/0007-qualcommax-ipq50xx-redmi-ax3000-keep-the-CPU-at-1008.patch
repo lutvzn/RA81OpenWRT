@@ -1,0 +1,49 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: lutvzn <106083845+lutvzn@users.noreply.github.com>
+Date: Thu, 12 Nov 2026 06:31:12 -0300
+Subject: [PATCH 7/9] qualcommax: ipq50xx: redmi-ax3000: keep the CPU at 1008
+ MHz
+
+Since 0974 the CPU boosts to 1296 MHz under load at the same fixed 1.1 V
+(no CPU regulator). On the RA81's IPQ5000 that corrupts memory under
+network load: single bits cleared (mostly bit 42 of a 64-bit word, at
+offset 8 of a cache line), oopses on kernel pointers with bit 42
+cleared, and silent resets every few minutes under Wi-Fi downlink.
+Pinned at 1296 MHz the board reset 1.5 s into a 400 Mbit/s downlink;
+capped at 1008 MHz, the same load ran 20 min with no error in a 24 MB
+RAM test (7 errors in 15 min with the boost).
+
+1008 MHz is also the highest operating point of the vendor firmware
+(800 and 1008 MHz at 1.1 V), and with TSENS off nothing would throttle.
+Drop the 1296 MHz operating point on this board.
+---
+ .../linux/qualcommax/dts/ipq5018-redmi-ax3000.dts   | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/target/linux/qualcommax/dts/ipq5018-redmi-ax3000.dts b/target/linux/qualcommax/dts/ipq5018-redmi-ax3000.dts
+index 20f211425a..5fdcde3792 100644
+--- a/target/linux/qualcommax/dts/ipq5018-redmi-ax3000.dts
++++ b/target/linux/qualcommax/dts/ipq5018-redmi-ax3000.dts
+@@ -110,6 +110,19 @@
+ 	reg = <0x0 0x40000000 0x0 0x800000>;
+ };
+ 
++/*
++ * Keep the CPU at the rated 1008 MHz, the highest operating point of the
++ * vendor firmware (800 and 1008 MHz at 1.1 V). There is no CPU regulator,
++ * and with TSENS off (below) no thermal throttling either. Boosting to
++ * 1296 MHz at the same 1.1 V corrupted memory on this IPQ5000 under
++ * network load: single bits cleared (mostly bit 42 of a 64-bit word),
++ * kernel oopses on pointers and silent resets every few minutes, none
++ * at 1008 MHz.
++ */
++&cpu_opp_table {
++	/delete-node/ opp-1296000000;
++};
++
+ &sleep_clk {
+ 	clock-frequency = <32000>;
+ };
+-- 
+2.52.0
+

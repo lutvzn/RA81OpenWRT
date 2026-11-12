@@ -1,0 +1,30 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: lutvzn <106083845+lutvzn@users.noreply.github.com>
+Date: Wed, 11 Nov 2026 22:53:12 -0300
+Subject: [PATCH 6/9] qualcommax: ipq50xx: redmi-ax3000: turn off ECM fraglist
+ GRO
+
+The same 256 MiB setting as on the CR8806, same hardware: NSS forwards
+established flows, but the fraglist segments of the first packets of
+each flow leave order-3 kmalloc-4k slabs half used, so several MiB stay
+pinned after each burst of new flows.
+---
+ .../ipq50xx/base-files/etc/uci-defaults/15_cr8806_ecm_gro_list  | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/target/linux/qualcommax/ipq50xx/base-files/etc/uci-defaults/15_cr8806_ecm_gro_list b/target/linux/qualcommax/ipq50xx/base-files/etc/uci-defaults/15_cr8806_ecm_gro_list
+index 921c450001..68998f7c46 100644
+--- a/target/linux/qualcommax/ipq50xx/base-files/etc/uci-defaults/15_cr8806_ecm_gro_list
++++ b/target/linux/qualcommax/ipq50xx/base-files/etc/uci-defaults/15_cr8806_ecm_gro_list
+@@ -7,7 +7,7 @@
+ . /lib/functions.sh
+ 
+ case "$(board_name)" in
+-xiaomi,cr8806|xiaomi,redmi-ax3000-ubootmod) ;;
++xiaomi,cr8806|xiaomi,redmi-ax3000|xiaomi,redmi-ax3000-ubootmod) ;;
+ *) exit 0 ;;
+ esac
+ uci -q get ecm.general > /dev/null || exit 0
+-- 
+2.52.0
+

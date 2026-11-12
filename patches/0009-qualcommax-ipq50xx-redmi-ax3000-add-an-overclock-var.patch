@@ -1,0 +1,509 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: lutvzn <106083845+lutvzn@users.noreply.github.com>
+Date: Thu, 12 Nov 2026 17:54:00 -0300
+Subject: [PATCH 9/9] qualcommax: ipq50xx: redmi-ax3000: add an overclock
+ variant
+
+A second image for the same board, xiaomi_redmi-ax3000-oc, whose CPU
+clock is chosen in LuCI (System -> CPU Clock) instead of being fixed at
+the rated 1008 MHz.
+
+Its DTS adds 1056, 1104, 1152, 1200 and 1248 MHz at the same 1.1 V as
+turbo-mode operating points. cpufreq-dt lists them as boost frequencies,
+which stay unused until boost is switched on, so the image boots, and
+failsafe runs, at 1008 MHz. The new luci-app-cpuclock keeps the choice in
+/etc/config/cpuclock; at boot and on every config change its init
+script switches boost on for a boost point, sets scaling_max_freq and the
+performance governor, so the CPU runs at that clock. schedutil cannot be
+used for it: it scales against arch_scale_freq_ref, the policy maximum
+recorded at boot (1008 MHz, boost off), and caps the utilisation at full
+capacity, so it never asks for more than 1008 MHz. Back at 1008 MHz,
+boost goes off and schedutil returns. The page warns about overclocking
+and, above 1200 MHz, that the tested board had no margin left. Its rpcd
+ACL lists the thermal zones under both /sys/class/thermal and
+/sys/devices/virtual/thermal: rpcd checks the resolved path too.
+
+Measured on one IPQ5000 under network load plus a RAM tester: 1104,
+1200, 1224 and 1248 MHz ran 15 min without an error; 1272 MHz cleared a
+bit in RAM after 6 min and 1296 MHz reset the board within seconds.
+
+The compatible stays xiaomi,redmi-ax3000, so board scripts are shared
+and sysupgrade works between the two images. Before the flash write,
+platform_pre_upgrade switches boost off, so the upgrade itself runs at
+1008 MHz.
+---
+ package/utils/luci-app-cpuclock/Makefile      |  28 ++++
+ .../resources/view/system/cpuclock.js         | 155 ++++++++++++++++++
+ .../root/etc/config/cpuclock                  |   5 +
+ .../root/etc/init.d/cpuclock                  |  93 +++++++++++
+ .../share/luci/menu.d/luci-app-cpuclock.json  |  14 ++
+ .../share/rpcd/acl.d/luci-app-cpuclock.json   |  20 +++
+ .../dts/ipq5018-redmi-ax3000-oc.dts           |  59 +++++++
+ target/linux/qualcommax/image/ipq50xx.mk      |  11 ++
+ .../base-files/lib/upgrade/platform.sh        |   5 +
+ 9 files changed, 390 insertions(+)
+ create mode 100644 package/utils/luci-app-cpuclock/Makefile
+ create mode 100644 package/utils/luci-app-cpuclock/htdocs/luci-static/resources/view/system/cpuclock.js
+ create mode 100644 package/utils/luci-app-cpuclock/root/etc/config/cpuclock
+ create mode 100755 package/utils/luci-app-cpuclock/root/etc/init.d/cpuclock
+ create mode 100644 package/utils/luci-app-cpuclock/root/usr/share/luci/menu.d/luci-app-cpuclock.json
+ create mode 100644 package/utils/luci-app-cpuclock/root/usr/share/rpcd/acl.d/luci-app-cpuclock.json
+ create mode 100644 target/linux/qualcommax/dts/ipq5018-redmi-ax3000-oc.dts
+
+diff --git a/package/utils/luci-app-cpuclock/Makefile b/package/utils/luci-app-cpuclock/Makefile
+new file mode 100644
+index 0000000000..eeac718264
+--- /dev/null
++++ b/package/utils/luci-app-cpuclock/Makefile
+@@ -0,0 +1,28 @@
++# SPDX-License-Identifier: GPL-2.0-only
++#
++# System -> CPU Clock: caps the CPU clock at a chosen operating point,
++# including the board's boost (turbo-mode) points, and keeps the choice
++# across reboots and sysupgrade. /etc/init.d/cpuclock applies
++# cpuclock.main.max_freq (kHz) at boot and on every change of the config:
++# above the highest regular point it switches cpufreq boost on, sets
++# scaling_max_freq and the performance governor (schedutil never picks a
++# boost point switched on after boot). Failsafe mode does not run it, so it
++# stays at the regular clock.
++
++include $(TOPDIR)/rules.mk
++
++LUCI_TITLE:=LuCI page to cap or raise the CPU clock
++LUCI_DESCRIPTION:=System -> CPU Clock: picks the maximum CPU clock from the \
++ board's operating points, boost points included, and applies it at boot.
++LUCI_DEPENDS:=+luci-base
++LUCI_PKGARCH:=all
++
++PKG_LICENSE:=GPL-2.0-only
++
++define Package/luci-app-cpuclock/conffiles
++/etc/config/cpuclock
++endef
++
++include $(TOPDIR)/feeds/luci/luci.mk
++
++# call BuildPackage - OpenWrt buildroot signature
+diff --git a/package/utils/luci-app-cpuclock/htdocs/luci-static/resources/view/system/cpuclock.js b/package/utils/luci-app-cpuclock/htdocs/luci-static/resources/view/system/cpuclock.js
+new file mode 100644
+index 0000000000..4bf756d97a
+--- /dev/null
++++ b/package/utils/luci-app-cpuclock/htdocs/luci-static/resources/view/system/cpuclock.js
+@@ -0,0 +1,155 @@
++'use strict';
++'require view';
++'require form';
++'require fs';
++'require poll';
++
++const CPUFREQ = '/sys/devices/system/cpu/cpufreq/';
++const POLICY = CPUFREQ + 'policy0/';
++const THERMAL = '/sys/class/thermal';
++/* Above this, the tested board had no margin left (see the warning) */
++const HIGH_KHZ = 1200000;
++
++function readText(path) {
++	return L.resolveDefault(fs.read(path), '').then((s) => String(s).trim());
++}
++
++function readFreqs(path) {
++	return readText(path).then((s) =>
++		s.split(/\s+/).filter(Boolean).map(Number).filter((n) => n > 0));
++}
++
++function readTemps() {
++	return L.resolveDefault(fs.list(THERMAL), []).then((entries) => Promise.all(
++		entries.filter((e) => /^thermal_zone\d+$/.test(e.name))
++			.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))
++			.map((e) => Promise.all([
++				readText(`${THERMAL}/${e.name}/type`),
++				readText(`${THERMAL}/${e.name}/temp`)
++			]).then(([type, temp]) => [type || e.name, temp]))));
++}
++
++function mhz(khz) {
++	return khz ? '%d MHz'.format(Math.round(khz / 1000)) : '-';
++}
++
++function notice(cls, title, text) {
++	return E('div', { 'class': 'alert-message ' + cls }, [
++		E('h4', {}, title), E('p', {}, text)
++	]);
++}
++
++return view.extend({
++	load() {
++		return Promise.all([
++			readFreqs(POLICY + 'scaling_available_frequencies'),
++			readFreqs(POLICY + 'scaling_boost_frequencies')
++		]);
++	},
++
++	renderStatus(el) {
++		return Promise.all([
++			readText(POLICY + 'scaling_cur_freq'),
++			readText(POLICY + 'scaling_max_freq'),
++			readText(CPUFREQ + 'boost'),
++			readText(POLICY + 'scaling_governor'),
++			readTemps()
++		]).then(([cur, max, boost, gov, temps]) => {
++			const rows = [
++				[_('Current clock'), mhz(+cur)],
++				[_('Clock limit'), mhz(+max)],
++				[_('Boost points'), boost === '1' ? _('enabled') : boost === '0' ? _('disabled') : _('not supported')],
++				[_('Governor'), gov || '-']
++			];
++
++			for (const [type, temp] of temps)
++				rows.push([_('Temperature (%s)').format(type),
++					temp !== '' ? '%.1f °C'.format(+temp / 1000) : '-']);
++
++			el.replaceChildren(E('table', { 'class': 'table' }, rows.map(([k, v]) =>
++				E('tr', { 'class': 'tr' }, [
++					E('td', { 'class': 'td left', 'width': '33%' }, k),
++					E('td', { 'class': 'td left' }, v)
++				]))));
++		});
++	},
++
++	render([regular, boost]) {
++		const rated = Math.max(0, ...regular);
++		const freqs = [...new Set([...regular, ...boost])].sort((a, b) => a - b);
++		const over = freqs.filter((f) => f > rated);
++		const high = freqs.filter((f) => f > HIGH_KHZ);
++		let m, s, o;
++
++		m = new form.Map('cpuclock', _('CPU Clock'),
++			_('Sets the CPU clock. Up to the rated clock it is the highest clock the governor may ' +
++			  'use. An overclock runs the CPU at the chosen clock all the time (performance ' +
++			  'governor): the default governor cannot use boost clocks. ' +
++			  'The setting is applied at boot and kept across sysupgrade; the kernel, failsafe mode ' +
++			  'and the sysupgrade flash write run at the rated clock.') + ' ' +
++			_('With NSS offload, routing and Wi-Fi forwarding barely use the CPU, so a higher clock ' +
++			  'only helps CPU-bound work: VPNs, SQM without NSS, the web interface.'));
++
++		s = m.section(form.NamedSection, 'main', 'cpuclock', _('Settings'));
++		s.addremove = false;
++
++		o = s.option(form.ListValue, 'max_freq', _('CPU clock'));
++		for (const f of freqs) {
++			let label = mhz(f);
++			if (f === rated)
++				label += ' ' + _('(rated, default)');
++			else if (f > HIGH_KHZ)
++				label += ' ' + _('(overclock, high risk)');
++			else if (f > rated)
++				label += ' ' + _('(overclock)');
++			o.value(String(f), label);
++		}
++		o.default = String(rated);
++		o.rmempty = false;
++		if (!over.length)
++			o.description = _('This board has no operating points above the rated clock.');
++
++		if (over.length) {
++			o = s.option(form.DummyValue, '_warn_over');
++			o.rawhtml = true;
++			o.cfgvalue = () => '';
++			o.renderWidget = () => notice('warning', _('Overclocking'), [
++				_('The rated clock of this CPU is %s. Every higher clock runs it at the same voltage ' +
++				  'outside its specification, and chips differ in how far they go.').format(mhz(rated)), ' ',
++				_('An unstable clock does not show itself right away: under load it silently flips bits ' +
++				  'in memory, which can corrupt packets, files and the configuration before the kernel ' +
++				  'oopses ("Unable to handle kernel paging request") or the router resets.'), ' ',
++				_('If that happens, go back to %s. If the router no longer stays up long enough, boot ' +
++				  'into failsafe mode and run: uci set cpuclock.main.max_freq=%d; uci commit cpuclock')
++					.format(mhz(rated), rated)
++			]);
++			for (const f of over)
++				o.depends('max_freq', String(f));
++		}
++
++		if (high.length) {
++			o = s.option(form.DummyValue, '_warn_high');
++			o.rawhtml = true;
++			o.cfgvalue = () => '';
++			o.renderWidget = () => notice('danger', _('Above 1200 MHz: no safety margin'), [
++				_('On the board this was tested on, 1248 MHz passed a 15 minute stress test, but 1272 MHz ' +
++				  'corrupted memory after 6 minutes and 1296 MHz reset it within seconds. Most chips will ' +
++				  'not have more margin than that, and yours may already fail at this clock.'), ' ',
++				_('Run a long stress test with the network under load before relying on it.')
++			]);
++			for (const f of high)
++				o.depends('max_freq', String(f));
++		}
++
++		return m.render().then((node) => {
++			const status = E('div', {}, E('em', { 'class': 'spinning' }, _('Loading…')));
++
++			node.insertBefore(E('div', { 'class': 'cbi-section' }, [
++				E('h3', {}, _('Status')), status
++			]), node.querySelector('.cbi-section'));
++			this.renderStatus(status);
++			poll.add(() => this.renderStatus(status), 5);
++			return node;
++		});
++	}
++});
+diff --git a/package/utils/luci-app-cpuclock/root/etc/config/cpuclock b/package/utils/luci-app-cpuclock/root/etc/config/cpuclock
+new file mode 100644
+index 0000000000..37190c3305
+--- /dev/null
++++ b/package/utils/luci-app-cpuclock/root/etc/config/cpuclock
+@@ -0,0 +1,5 @@
++config cpuclock 'main'
++	# Maximum CPU clock in kHz, one of
++	#   /sys/devices/system/cpu/cpufreq/policy0/scaling_available_frequencies
++	#   /sys/devices/system/cpu/cpufreq/policy0/scaling_boost_frequencies
++	option max_freq '1008000'
+diff --git a/package/utils/luci-app-cpuclock/root/etc/init.d/cpuclock b/package/utils/luci-app-cpuclock/root/etc/init.d/cpuclock
+new file mode 100755
+index 0000000000..8b56be9ed3
+--- /dev/null
++++ b/package/utils/luci-app-cpuclock/root/etc/init.d/cpuclock
+@@ -0,0 +1,93 @@
++#!/bin/sh /etc/rc.common
++# Applies cpuclock.main.max_freq (kHz). A regular operating point: boost
++# off, schedutil, scaling_max_freq. A boost point: boost on, scaling_max_freq,
++# then the performance governor, so the CPU runs at that clock. schedutil
++# cannot use boost points switched on after boot: it scales against the
++# maximum recorded when the policy was created (arch_scale_freq_ref), the
++# rated clock, so it never asks for more. Unknown values fall back to the
++# highest regular operating point.
++
++START=90
++USE_PROCD=1
++
++CPUFREQ=/sys/devices/system/cpu/cpufreq
++POLICY=$CPUFREQ/policy0
++
++regular_max() {
++	local f max=0
++
++	for f in $(cat $POLICY/scaling_available_frequencies); do
++		[ "$f" -gt "$max" ] && max=$f
++	done
++	echo $max
++}
++
++# The default governor, used for the regular points
++GOVERNOR=schedutil
++
++set_governor() {
++	[ "$(cat $POLICY/scaling_governor)" = "$1" ] && return 0
++	grep -qw "$1" $POLICY/scaling_available_governors 2>/dev/null &&
++		echo "$1" > $POLICY/scaling_governor
++}
++
++set_boost() {
++	[ -w $CPUFREQ/boost ] || return 0
++	[ "$(cat $CPUFREQ/boost)" = "$1" ] || echo "$1" > $CPUFREQ/boost
++}
++
++apply() {
++	local want base f ok=
++
++	[ -r $POLICY/scaling_available_frequencies ] || return 0
++	base=$(regular_max)
++
++	config_load cpuclock
++	config_get want main max_freq "$base"
++	for f in $(cat $POLICY/scaling_available_frequencies \
++		       $POLICY/scaling_boost_frequencies 2>/dev/null); do
++		[ "$f" = "$want" ] && ok=1
++	done
++	if [ -z "$ok" ]; then
++		logger -t cpuclock "$want kHz is not an operating point of this board, using $base kHz"
++		want=$base
++	fi
++
++	if [ "$want" -gt "$base" ]; then
++		# Switching boost on raises the limit to the highest boost
++		# point. Under schedutil the clock stays at the rated one
++		# meanwhile; the limit is set before the governor that runs
++		# at it.
++		[ "$(cat $CPUFREQ/boost 2>/dev/null)" = 1 ] || set_governor $GOVERNOR
++		set_boost 1
++		echo "$want" > $POLICY/scaling_max_freq
++		set_governor performance
++	else
++		# boost 0 drops the limit, and the clock with it, first
++		set_boost 0
++		echo "$want" > $POLICY/scaling_max_freq
++		set_governor $GOVERNOR
++	fi
++	logger -t cpuclock "CPU clock $((want / 1000)) MHz" \
++		"(boost $(cat $CPUFREQ/boost 2>/dev/null || echo n/a)," \
++		"governor $(cat $POLICY/scaling_governor))"
++}
++
++start_service() {
++	apply
++}
++
++reload_service() {
++	apply
++}
++
++stop_service() {
++	[ -r $POLICY/scaling_available_frequencies ] || return 0
++	set_boost 0
++	regular_max > $POLICY/scaling_max_freq
++	set_governor $GOVERNOR
++}
++
++service_triggers() {
++	procd_add_reload_trigger cpuclock
++}
+diff --git a/package/utils/luci-app-cpuclock/root/usr/share/luci/menu.d/luci-app-cpuclock.json b/package/utils/luci-app-cpuclock/root/usr/share/luci/menu.d/luci-app-cpuclock.json
+new file mode 100644
+index 0000000000..f18422d35a
+--- /dev/null
++++ b/package/utils/luci-app-cpuclock/root/usr/share/luci/menu.d/luci-app-cpuclock.json
+@@ -0,0 +1,14 @@
++{
++	"admin/system/cpuclock": {
++		"title": "CPU Clock",
++		"order": 65,
++		"action": {
++			"type": "view",
++			"path": "system/cpuclock"
++		},
++		"depends": {
++			"acl": [ "luci-app-cpuclock" ],
++			"uci": { "cpuclock": true }
++		}
++	}
++}
+diff --git a/package/utils/luci-app-cpuclock/root/usr/share/rpcd/acl.d/luci-app-cpuclock.json b/package/utils/luci-app-cpuclock/root/usr/share/rpcd/acl.d/luci-app-cpuclock.json
+new file mode 100644
+index 0000000000..3c510463e1
+--- /dev/null
++++ b/package/utils/luci-app-cpuclock/root/usr/share/rpcd/acl.d/luci-app-cpuclock.json
+@@ -0,0 +1,20 @@
++{
++	"luci-app-cpuclock": {
++		"description": "Grant access to the CPU clock setting",
++		"read": {
++			"file": {
++				"/sys/devices/system/cpu/cpufreq/boost": [ "read" ],
++				"/sys/devices/system/cpu/cpufreq/policy0/*": [ "read" ],
++				"/sys/class/thermal": [ "list" ],
++				"/sys/class/thermal/thermal_zone*/type": [ "read" ],
++				"/sys/devices/virtual/thermal/thermal_zone*/type": [ "read" ],
++				"/sys/class/thermal/thermal_zone*/temp": [ "read" ],
++				"/sys/devices/virtual/thermal/thermal_zone*/temp": [ "read" ]
++			},
++			"uci": [ "cpuclock" ]
++		},
++		"write": {
++			"uci": [ "cpuclock" ]
++		}
++	}
++}
+diff --git a/target/linux/qualcommax/dts/ipq5018-redmi-ax3000-oc.dts b/target/linux/qualcommax/dts/ipq5018-redmi-ax3000-oc.dts
+new file mode 100644
+index 0000000000..42213d80be
+--- /dev/null
++++ b/target/linux/qualcommax/dts/ipq5018-redmi-ax3000-oc.dts
+@@ -0,0 +1,59 @@
++// SPDX-License-Identifier: GPL-2.0-or-later OR MIT
++
++/*
++ * Redmi AX3000 (RA81), overclock variant: the same board with CPU operating
++ * points above the rated 1008 MHz. Same compatible, so the board name, the
++ * board scripts and sysupgrade between the two images are unchanged.
++ *
++ * The extra points are turbo-mode: cpufreq-dt lists them as boost
++ * frequencies, which the kernel leaves unused until boost is switched on
++ * (/sys/devices/system/cpu/cpufreq/boost). The image boots, and failsafe
++ * runs, at 1008 MHz; /etc/init.d/cpuclock (luci-app-cpuclock, System ->
++ * CPU Clock) enables boost and caps scaling_max_freq to the configured
++ * clock. The a53pll steps in 24 MHz (L x 24 MHz), always at 1.1 V: there
++ * is no CPU regulator.
++ *
++ * Measured on one IPQ5000 under network load plus a RAM tester (2026-11-12):
++ * 1104, 1200, 1224 and 1248 MHz ran 15 min with no error (79-83 C); 1272 MHz
++ * cleared a bit in RAM after 6 min; 1296 MHz reset the board within seconds.
++ * 1056 and 1152 MHz lie between tested points. Other chips may fail lower.
++ */
++
++#include "ipq5018-redmi-ax3000.dts"
++
++&cpu_opp_table {
++	opp-1056000000 {
++		opp-hz = /bits/ 64 <1056000000>;
++		opp-microvolt = <1100000>;
++		clock-latency-ns = <200000>;
++		turbo-mode;
++	};
++
++	opp-1104000000 {
++		opp-hz = /bits/ 64 <1104000000>;
++		opp-microvolt = <1100000>;
++		clock-latency-ns = <200000>;
++		turbo-mode;
++	};
++
++	opp-1152000000 {
++		opp-hz = /bits/ 64 <1152000000>;
++		opp-microvolt = <1100000>;
++		clock-latency-ns = <200000>;
++		turbo-mode;
++	};
++
++	opp-1200000000 {
++		opp-hz = /bits/ 64 <1200000000>;
++		opp-microvolt = <1100000>;
++		clock-latency-ns = <200000>;
++		turbo-mode;
++	};
++
++	opp-1248000000 {
++		opp-hz = /bits/ 64 <1248000000>;
++		opp-microvolt = <1100000>;
++		clock-latency-ns = <200000>;
++		turbo-mode;
++	};
++};
+diff --git a/target/linux/qualcommax/image/ipq50xx.mk b/target/linux/qualcommax/image/ipq50xx.mk
+index 9b52553b7d..1056b23f17 100644
+--- a/target/linux/qualcommax/image/ipq50xx.mk
++++ b/target/linux/qualcommax/image/ipq50xx.mk
+@@ -886,6 +886,17 @@ define Device/xiaomi_redmi-ax3000
+ endef
+ TARGET_DEVICES += xiaomi_redmi-ax3000
+ 
++# The same board with CPU clocks above 1008 MHz, chosen in System -> CPU Clock
++# (luci-app-cpuclock). Same compatible as above, so sysupgrade goes both ways.
++define Device/xiaomi_redmi-ax3000-oc
++	$(call Device/xiaomi_redmi-ax3000)
++	DEVICE_VARIANT := (RA81, overclock)
++	DEVICE_DTS := ipq5018-redmi-ax3000-oc
++	SUPPORTED_DEVICES := xiaomi,redmi-ax3000 redmi,ax3000
++	DEVICE_PACKAGES += luci-app-cpuclock
++endef
++TARGET_DEVICES += xiaomi_redmi-ax3000-oc
++
+ define Device/xiaomi_redmi-ax5400
+ 	$(call Device/xiaomi_ipq50xx_ax_base)
+ 	DEVICE_MODEL := Redmi AX5400
+diff --git a/target/linux/qualcommax/ipq50xx/base-files/lib/upgrade/platform.sh b/target/linux/qualcommax/ipq50xx/base-files/lib/upgrade/platform.sh
+index a4edbcc774..ca1c83bde8 100644
+--- a/target/linux/qualcommax/ipq50xx/base-files/lib/upgrade/platform.sh
++++ b/target/linux/qualcommax/ipq50xx/base-files/lib/upgrade/platform.sh
+@@ -403,6 +403,11 @@ xiaomi_redmi_ax3000_pre_upgrade() {
+ 	# written yet: a hang or a crash here leaves the running slot intact.
+ 	v "$(grep MemAvailable /proc/meminfo) before freeing memory"
+ 
++	# Overclock image: write the flash at the rated 1008 MHz. Switching
++	# boost off drops the clock limit to the highest non-boost point.
++	[ -w /sys/devices/system/cpu/cpufreq/boost ] &&
++		echo 0 > /sys/devices/system/cpu/cpufreq/boost
++
+ 	echo 2048 > /proc/sys/vm/min_free_kbytes
+ 
+ 	# Unloading ath11k_ahb stops the Q6, do not wait for it forever
+-- 
+2.52.0
+

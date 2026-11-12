@@ -8,7 +8,7 @@ Everything about the device in this file was verified against the live router
 (10.0.0.3), its full flash dump, the stock Xiaomi firmware or the U-Boot binary,
 unless marked otherwise.
 
-> **Branch `nss-6.18` (NSS offload line, in progress since 2026-10-16).** Here the
+> **Branch `snapshot-nss` (NSS offload line, the release line; was `nss-6.18`, since 2026-10-16).** Here the
 > base is not v25.12.5 but kuncy7/openwrt-nss-edma `c3po-tag-8021q` at release
 > `ipq50xx-2026.10.15-2` (OpenWrt main, kernel 6.18, stmmac + NSS, DSA `qca-8021q`
 > tagger), pinned in `patches/BASE`; feeds pinned in `configs/feeds.conf` to that
@@ -20,10 +20,26 @@ unless marked otherwise.
 > `ipq-wifi/files/`), 0002 = revert of the fork's debug-aids commit (no
 > `STRICT_DEVMEM`), 0003 = `vm.min_free_kbytes` 8192 (uci-defaults), 0004 =
 > `platform_pre_upgrade` frees memory (min_free 2048, rmmod ath11k, drop caches)
-> before the sysupgrade flash write. The 25.12 ring-shrink patches are dropped: the fork's
+> before the sysupgrade flash write, 0005 = second CPU link (GMAC0 -> switch port 5;
+> the AP profile keeps `wan` on `eth1`, see the dual-conduit flood in the evaluation
+> doc), 0006 = ECM fraglist GRO off, 0007 = CPU kept at 1008 MHz (the fork's 1296 MHz
+> boost, 0974, corrupts memory on this IPQ5000 under load), 0008 = TSENS on (fused
+> two-point calibration, 62-68 C, see the evaluation doc), 0009 = overclock variant: second
+> device `xiaomi_redmi-ax3000-oc` (same compatible; DTS adds 1056-1248 MHz as `turbo-mode`
+> OPPs, off until cpufreq boost is on) with `package/utils/luci-app-cpuclock` (System ->
+> CPU Clock, `/etc/config/cpuclock` `main.max_freq` kHz, `/etc/init.d/cpuclock`: boost on + `performance` governor for a boost point, since schedutil never picks one), warnings
+> above 1008 and 1200 MHz; `platform_pre_upgrade` switches boost off. `configs/ra81.config`
+> is multi-profile + per-device rootfs, so one build gives both images. Base since 2026-11-12:
+> release `ipq50xx-2026.11.11`. The 25.12 ring-shrink patches are dropped: the fork's
 > `ATH11K_MEM_PROFILE_256M` shrinks the rings further. Config = the fork's release
 > groups common + 256m. Status, plan and checks: `docs/nss-evaluation.md`. The rest
-> of this file describes the 25.12 line (`master`) unless it says otherwise.
+> of this file describes the 25.12 line (branch `25.12-no-nss`, was `master`) unless it says otherwise.
+>
+> **Branch names** (renamed 2026-11-12): `<OpenWrt base>-<nss|no-nss>`. `snapshot-nss`
+> = kuncy7 fork (OpenWrt main + NSS, kernel 6.18), the GitHub default branch and the one
+> CI releases are built from; `25.12-no-nss` = OpenWrt v25.12.5 (kernel 6.12, no NSS),
+> kept for reference, which also carries the sysupgrade memory hook and TSENS (its
+> patches 0004/0005). A future stable OpenWrt release with NSS would be e.g. `26.xx-nss`.
 
 ## Repository layout
 
@@ -31,7 +47,7 @@ unless marked otherwise.
 |---|---|---|
 | `README.md`, `LICENSE` | user-facing docs (build/install/recovery/credits), GPL-2.0 | yes |
 | `patches/` | OpenWrt patch series on top of the tree named in `patches/BASE` (URL, ref, label, dev tree, branch) | yes |
-| `configs/ra81.config` | diffconfig (target, device, LuCI, initramfs) | yes |
+| `configs/ra81.config` | diffconfig (target, device(s), LuCI, initramfs; NSS line: multi-profile, standard + `-oc` device) | yes |
 | `configs/feeds.conf` | pinned feeds, copied into the tree (NSS line only) | yes |
 | `configs/distfeeds.list` | the image's apk feed list (`@REPO@` = `build.sh --repo`; NSS line only) | yes |
 | `configs/files-ap/` | optional first-boot overlay: this unit's AP role (10.0.0.3/23, no DHCP) | yes |
@@ -204,9 +220,12 @@ fw_setenv flag_ota_reboot 0; reboot`.
   WLAN.HK.2.5, and the upstream firmware (WLAN.HK.2.7.0.1-01744, the same build the
   hzyitc QSDK firmware ran) asserts on them:
   `phyrf_bdf.c:6245 Assertion axis_value == ANTENNACHAIN_AXIS_Z failed` (seen on device).
-- **TSENS disabled**: the boot firmware does not enable it on IPQ5000 and some zones
-  report bogus critical temperatures (ImmortalWrt saw forced shutdowns). A critical
-  shutdown before preinit would defeat the rollback.
+- **TSENS disabled** (25.12 line only): the boot firmware does not enable it on IPQ5000
+  and some zones were said to report bogus critical temperatures (ImmortalWrt). Not
+  reproduced on this unit (2026-11-12): the upstream driver enables the block itself,
+  the fuses hold a two-point calibration and the zones read 62-68 C, so the NSS line
+  turns it on (patch 0008). A critical shutdown before preinit would defeat the rollback,
+  but the critical trip is 120 C.
 - **Packages**: USB and ext4/losetup defaults removed (no USB port, NAND only); LuCI added.
 - **overlay partition** (31 MiB) is left unused for now (rootfs_data lives in the slot UBI).
 
@@ -301,7 +320,7 @@ Each has `*-squashfs-factory.ubi` (first install into a slot), `*-squashfs-sysup
   untouched (compile-time wrap macro).
 - A kernel that hangs *before* preinit is retried forever by U-Boot (ota flag stays set);
   recovery then needs UART or the stock TFTP recovery.
-- No temperature reporting (TSENS disabled).
+- No temperature reporting (TSENS disabled; on in the NSS line, patch 0008).
 - No NSS offload (verified on device): no NSS firmware, no qca-nss-drv/ECM; `qca_nss_dp`
   is only the GMAC Ethernet driver. Wi-Fi<->Ethernet bridging and any routing run on
   the A53 cores. Software flow offloading (nftables flowtable) is available but off
@@ -341,7 +360,7 @@ To go back to the old firmware: `fw_setenv flag_last_success 0; reboot`.
 
 ## Remaining tasks / ideas
 
-- **NSS line (branch `nss-6.18`)**: ported and running on the router since
+- **NSS line (branch `snapshot-nss`)**: ported and running on the router since
   2026-10-17 (Wi-Fi<->LAN 550-660 Mbit/s at ~97 % CPU idle, MemAvailable 52 MB).
   **Next steps** (sysupgrade memory done: hook in patch 0004, frees 49.7 -> 108 MB, full sysupgrade to slot 1 passed; kmod repo done locally (`=m` list, `build.sh --repo`, CI gh-pages job written but not run; out-of-tree kmods rebuilt on a vermagic change, see "To do next" #4); next: first CI release, PPPoE NAT test (plan and risks written down: `docs/nss-evaluation.md` "To do next" #5); the 3 h soak and the NAT test (wired 922-930 Mbit/s) are done) and
   the router state left behind: `docs/nss-evaluation.md`, "To do next".
@@ -349,7 +368,7 @@ To go back to the old firmware: `fw_setenv flag_last_success 0; reboot`.
 - Restore the owner's Wi-Fi (SSID/key/channel 100 HE160 from the old config) — needs OK.
 - Press-test reset/mesh buttons; long-term stability with clients; throughput.
 - Throughput test from a Wi-Fi client (iperf3) to confirm the 2048 RX ring is enough.
-- Optional: re-enable TSENS with only cpu/ubi32 zones once readings are checked.
+- Optional: re-enable TSENS on the 25.12 line too (readings checked 2026-11-12, NSS line patch 0008).
 - Optional: use the 31 MiB `overlay` partition for rootfs_data.
 - Optional: upstream submission (BDFs to qca-wireless, device patch to openwrt).
 

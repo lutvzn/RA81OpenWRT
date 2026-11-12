@@ -109,7 +109,7 @@ Client: this host's MT7921 (2x2 HE), test AP `RA81-iperf` on 5 GHz ch36 HE80, li
 4. For the 25.12 line meanwhile: persist the IRQ split (QCN6102 IRQs on CPU1), test
    RPS and software flow offloading in the router (generic) image.
 
-## Port status (branch `nss-6.18` of this repo)
+## Port status (branch `snapshot-nss` of this repo, first named `nss-6.18`)
 
 Step 2 of the plan, started 2026-10-16:
 
@@ -282,6 +282,253 @@ That is gigabit line rate for TCP goodput (~940 Mbit/s max) in both directions w
 CPUs idle: the router-role goal (~900 Mbit/s, the single-CPU-port ceiling) is met.
 Not measured: PPPoE (no PPPoE server on the bench).
 
+### Second CPU link and the bridged-WAN AP (2026-11-12, ipq50xx-2026.11.11, slot 0)
+
+Patch 0005 enables GMAC0 -> port 5 as a second CPU port; the fork's board.d puts
+`wan` on `eth0` and `lan1-3` on `eth1`, and since 2026.11.11 (fork commit
+4d73bf55e2) nss-tools keeps that split. In the AP profile `wan` is bridged into
+br-lan, and that breaks flooding. Patch 784 (tag_8021q VLAN only to the port's own
+CPU port) covers the standalone VIDs only. The bridge VID (3088) contains both CPU
+ports, and the QCA8337 runs in 802.1Q secure mode, where the VLAN table, not the port
+lookup mask, decides where floods go. So every upstream broadcast/multicast went
+up both links:
+switch MIB p05/p06 TxBroad +41/+41 in 10 s. With no LAN port up, the eth0 copy is dropped (`dropped frame
+from ... vbid=1`). With a LAN port up, tag_8021q hands it to that LAN port, so br-lan
+forwards both copies and learns upstream MACs on it. A 60 s capture on a Wi-Fi client
+showed every broadcast/multicast frame twice (3-5 ms apart). Unicast was unaffected
+(tx_fwd_offload, the hardware FDB picks the port; 900 pings, 0 loss).
+
+Fix for the AP role: a `config device` with `name wan`, `conduit eth1` (all ports on
+one link; an AP gains nothing from the second link). `configs/files-ap` now adds it on
+first boot when board.json has `wan` on `eth0`; on the router it was added by hand.
+After a reboot: `wan@eth1`, fw_mask 0x2, eth0 rx +0, no dropped-frame warnings.
+Wi-Fi (ch36 HE80) unchanged: dl4 826 / ul4 767 Mbit/s at 97 % idle (split: dl4 775
+/ ul4 806). The router role keeps the split. Generic images with a bridged WAN, and
+the fork's other split boards (AX5400, Cudy P5, PZ-L8, CR880x), have the same issue,
+so it should be reported upstream.
+
+It is the fork's bug, not ours: patches 0001-0006 change no kernel code (the DTS,
+board.d, base-files, one config symbol), and the fork's own `xiaomi,redmi-ax3000-ubootmod`
+and `xiaomi,cr8806` get the same wan@eth0 / lan@eth1 split from its board.d. The CPU
+rule is `dsa_port_tag_8021q_vlan_match()` (fork patch 784): a CPU port gets a VID when a
+user port behind it does, so a bridge spanning both conduits puts both CPU ports in its
+VID. Nothing on `c3po-tag-8021q` after the release tag changes this (checked up to
+b0c52c9563, 2026-11-11). Runtime A/B, 30 s each, uplink on wan, host on lan3:
+wan@eth1 p05 Tx bcast/mcast +0/+0, p06 +110/+4; wan@eth0 p05 +129/+27, p06 +129/+28
+(the same floods on both links); back on eth1 p05 +0/+0.
+
+### Release stress test (2026-11-12, ipq50xx-2026.11.11, slot 0, AP profile)
+
+Load from this host: 5 GHz ch36 HE80 client (`wlp2s0`, link 1200/1200) -> RA81 -> wan
+-> iperf3 server in netns `ra81s` (10.0.0.51); wired UDP flood (`enp0s20f0u6` ->
+10.0.0.3, 982 Mbit/s); a 24 MB mlocked RAM tester on the router (`memt`, five
+patterns incl. all-ones and `0xffffff80...` pointers); kernel log over SSH; a reboot
+watchdog that stops the client (bridged-AP TCP sessions survive a router reboot and
+would keep loading it).
+
+**Passed** (before the crash hunt): TCP/UDP up/down, ECM table fill and churn, 20x
+`wifi reload`, network restarts, port flaps, 5 reboots (dual-boot flags confirmed each
+time), a 2 h soak with LuCI polling (MemAvailable 38-50 MB, no leak),
+`tools/validate-images.sh`, `tools/test-dualboot.sh`.
+
+**Release blocker, fixed: the 1296 MHz CPU boost corrupts memory.** Under sustained
+load the router oopsed or reset silently every few minutes (Wi-Fi downlink 4x100
+Mbit/s: about every 4 min, 6 reboots in 26 min). Each of the five oopses faulted on a
+kernel pointer with only bit 42 cleared (`ffffff80...` -> `fffffb80...`, once the
+kernel image `ffffffc0...` -> `fffffbc0...`), in unrelated code (`tcp_poll`,
+`anon_vma_interval_tree_remove`, ...). NSS Wi-Fi offload on or off made no difference.
+`memt` found 7 single-bit 1->0 errors in 15 min of wired flood (six bit 42, one bit
+1), **all at offset 8 of a 64-byte cache line**, and 0 in 2034 passes idle. A fixed bit
+at a fixed position in the line is a hardware data-path fault, not a stale pointer.
+The cause is fork patch 0974 (since 2026.11.07): 1296 MHz "above the rated 1008 MHz"
+at the same 1.1 V (no CPU regulator), used by schedutil under load. TSENS was off in
+this image, so nothing throttled it either (it is not thermal anyway: see the pinned
+run below and the TSENS readings, 62-68 C, in the next section). The vendor firmware's table is 800/1008
+MHz at 1.1 V. Runtime A/B on the same image:
+
+| Run | CPU | Load | Result |
+|---|---|---|---|
+| n2 | schedutil 1008/1296 | dl 4x100M, host Wi-Fi | reset after 185 s (and every ~4 min) |
+| w3 | schedutil | wired UDP flood 982M, 15 min | no reset, memt 7 errors |
+| f1 | max 1008 | dl 4x100M, host Wi-Fi, 20 min | 400 Mbit/s, no reset, memt 0 / 723 passes |
+| f2 | pinned 1296 (no rate changes) | dl 4x100M | silent reset 1.5 s into the load |
+| f3 | max 1008 | dl 4 streams full rate, NSS offload, 30 min | 811 Mbit/s avg (727-913), memt 0 / 2980, MemAvailable 55 MB |
+| f4 | max 1008 | bidir 4+4, NSS offload, 15 min | 751 down / 49 up, no reset, memt 0 / 1501, MemAvailable 54 MB |
+| w4, w5 | max 1008 | wired UDP flood 982M, 2 x 15 min | no reset; memt 0 / 279 (w5; fewer passes, the flood takes the CPU). SSH to the router stalls during this flood at 1008 MHz |
+
+f2 rules out the PLL relock/GPLL0 detour of 0973/0975: the clock was not changing.
+NSS forwards the traffic, so the cap costs no throughput. Patch 0007 deletes the 1296
+MHz operating point from the RA81 DTS (one OPP, 1008 MHz, as in the October
+release). The fork's `xiaomi,redmi-ax3000-ubootmod` is the same IPQ5000 board; report
+drafted in `issue-crash.md` (not posted).
+
+**Smaller findings:**
+- **Downlink saturates the NSS Wi-Fi TX descriptor pool** (`tx_desc_alloc_fail`
+  +3.2 M in 60 s at 748 Mbit/s, 4704 TCP retransmits): a parallel ping from the
+  client to the gateway takes p50 64-73 ms, p95 91-122 ms under full load (f3, f4;
+  1-2 ms idle, p50 8 ms at 400 Mbit/s). In bidir the downlink starves the upload:
+  751 down / 49 up in f4 (upload alone 625). The upload's TCP ACKs wait behind the
+  downlink queue. Bufferbloat rather than a fault: the offloaded path bypasses
+  mac80211's fq_codel/AQL, and SQM cannot hook it.
+- **`root` has no password** on the router (`Auth succeeded with blank password`).
+  Not a sysupgrade bug: `/etc/shadow` is in the backup (`sysupgrade -b`), and the
+  carried-over root entry is pristine (empty last-change field, which `passwd`/LuCI
+  always fill in), so the password was never saved on the old system. Images ship
+  without one (OpenWrt default); set one with `passwd`.
+- **NSS Wi-Fi offload vs host Wi-Fi at 1008 MHz** (`nss.general.wifi_offload`, same
+  client, 4 TCP streams, ping to the gateway alongside):
+
+  | Mode | down | up | bidir down / up | ping avg dl / ul / bidir | router CPU idle |
+  |---|---|---|---|---|---|
+  | host (`0`) | 495 | 422 | 289 / 194 | 22 / 17 / 110 ms (bidir max 331) | 0-1 % |
+  | offload (`1`, default) | 825 | 662 | 608 / 195 | 59 / 29 / 63 ms | 96-97 % |
+
+  Offload stays the default: higher throughput in every direction and an idle CPU.
+  Host mode has lower latency with one-way traffic but worse latency in bidir, because
+  the CPU is saturated.
+- ECM `disable_gro_list` (patch 0006) works: `rx-gro-list` is off on every physical
+  port after boot; only `br-lan` keeps the flag, where it does nothing.
+
+### Temperature sensor (TSENS, 2026-11-12, patch 0008)
+
+The RA81 DTS had `&tsens { status = "disabled"; }`, because the boot firmware leaves the
+block off ("tsens device is not enabled" with the vendor 5.4 kernel) and some zones were
+said to report bogus critical temperatures. Checked on the router, slot 0, 1008 MHz:
+
+- The upstream driver does not need the boot firmware: on the IPQ5018 it enables the
+  block itself (`init_tsens_v1_no_rpm`: SW reset, sensor mask, enable).
+- Calibration fuses (QFPROM 0x249-0x254, read through `qfprom0/nvmem`): **mode 3, two-point
+  calibration** (30 and 120 C), base1 86, base2 160. Per sensor (code at 30 C / at
+  120 C / slope): s0 468/692/2.49, s1 ubi32 416/696/3.11, s2 cpu 344/640/3.29, s3
+  top-glue 396/680/3.15, s4 gephy 364/648/3.15 codes per C. All plausible (driver
+  default slope 3.2).
+- A test module (`tsensprobe.ko`, scratch, not in the image) mapped SROT 0x4a8000 / TM
+  0x4a9000: HW version 0x10040000, `ctrl=0` (off). With the driver's enable sequence
+  (`ctrl=0xf9`), all five sensors went valid:
+
+  | State | s0 | ubi32 | cpu | top-glue | gephy |
+  |---|---|---|---|---|---|
+  | idle (6 h up, closed case) | 47.3 | 62.8 | 63.2 | 62.3 | 63.3 |
+  | both cores at 100 % (`yes`), 15 s | 50.5 | 65.4 | 66.8 | 64.9 | 66.8 |
+  | same, 4 min | 52.5 | 66.6 | 68.3 | 66.5 | 68.4 |
+  | 2 min after | 47.3 | 63.1 | 63.8 | 63.3 | 64.2 |
+
+  The four sensors used by the thermal zones agree within about 1 C and track the load;
+  s0 (no zone in `ipq5018.dtsi`) reads 15 C lower. No bogus values.
+- Patch 0008 sets `status = "okay"`: zones `cpu-thermal` (passive 100 C with cpufreq
+  cooling, critical 120 C), `ubi32`, `top-glue` and `gephy` (critical 120 C). That is
+  >50 C above what the board reaches here. The fork's own `redmi-ax3000-ubootmod` DTS
+  never disabled it.
+- **Side finding, upstream DT bug:** reading the whole `qfprom0` nvmem file (it is
+  world-readable, 4 KiB) takes a synchronous external abort at offset 0x40c
+  (`qfprom_reg_read`): the `ipq5018.dtsi` qfprom node maps 0x1000 bytes, but part of it
+  is protected. With the default `panic_on_oops=1` any user can reboot the router with
+  `cat /sys/bus/nvmem/devices/qfprom0/nvmem`. Offsets below 0x40c (which include the
+  TSENS cells) read fine. The kernel survived because the stress test had set
+  `panic_on_oops=0`, but it was left tainted.
+
+### Temperatures under load and CPU clocks above 1008 MHz (2026-11-12, r0+38535, slot 1)
+
+Same load for every run: 4-stream 5 GHz TCP downlink (`iperf3 -P4 -R`) to one client
+through NSS Wi-Fi offload, plus the 24 MB mlocked RAM tester (`memt`), a reboot
+watchdog, and a temperature log every 30 s (closed case, room temperature).
+
+**1008 MHz soak with the release image (no manual cap; 1008 is its only OPP), 30 min:**
+no reset, 741 Mbit/s average, RAM tester 0 errors (1200 passes; its SSH session dropped
+after ~12 min because of Wi-Fi bufferbloat, before the DSCP EF rule was in place).
+Zones: 63 C idle -> 71 C at 5 min -> 75 C -> **77 C plateau**.
+
+**Higher clocks, set at runtime.** Above 1008 MHz there is no OPP in the image, so a
+scratch module (`cpuclk.ko`, not in the image) called `clk_set_rate` on the CPU clock
+directly. The `a53pll` steps in 24 MHz (L value), so 1104 = L46 is the closest to 1100.
+cpufreq still reports 1008 (`scaling_cur_freq`). A dependent-add loop measured the real
+clock each time. The runs went back to back, so each one started on a warm board.
+
+| Clock (PLL) | Measured | Duration | Result | Throughput | RAM tester | Zones start -> peak |
+|---|---|---|---|---|---|---|
+| 1008 MHz | 973-983 | 30 min | ok | 741 Mbit/s | 0 errors | 63 -> 77 C |
+| 1104 MHz | 1073-1078 | 15 min | ok, no kernel faults | 743 Mbit/s | 0 errors / 1658 passes | 72 -> 81 C |
+| 1200 MHz | 1140-1172 | 15 min | ok, no kernel faults | 728 Mbit/s | 0 errors / 1778 passes | 76 -> 83 C |
+| 1224 MHz | 1173-1196 | 15 min | ok, no kernel faults | 741 Mbit/s | 0 errors / 1805 passes | 64 -> 79 C |
+| 1248 MHz | 1195-1220 | 15 min | ok, no kernel faults (fresh boot) | 755 Mbit/s | 0 errors / 1828 passes | 74 -> 83 C |
+| 1272 MHz | 1227-1242 | 6 min, stopped | **RAM error at ~6 min** (pass 703): bit 42 cleared at offset 8 of a cache line, same signature as 1296 | 746 Mbit/s | **1 error** / 810 passes | 74 -> 80 C |
+| 1296 MHz | 1262-1264 | - | **silent reset ~4 s into the load** (no oops logged, `panic_on_oops=0`) | - | - | 78 C at reset |
+
+- The 1296 MHz result reproduces the earlier pinned run (reset 1.5 s into the load), this
+  time with the clock set directly rather than through cpufreq-dt. The board was at
+  78 C, below the 83 C it held for 15 min at 1200 MHz, so the failure is the clock, not
+  the temperature.
+- 1224-1272 ran later, after the 1296 reset. The RAM tester and the temperature logger ran
+  on the router itself (detached), because in a first 1272 run the client's SSH sessions,
+  and the tester with them, dropped 6 s into the load (Wi-Fi congestion, no router fault):
+  that run stayed up 15 min but had no RAM coverage and is not counted. The 1272 error
+  took the same ~6 min to appear as the first error in the release-default 1008/1296
+  wired-flood run (05:56, 5.8 min in): a short test can miss it.
+- This chip's limit at the fixed 1.1 V is **between 1248 and 1272 MHz**: 1248 passed
+  15 min, 1272 corrupted memory within 6 min. That is one
+  unit, and chips differ in margin at a fixed voltage, so passing at 1200 on this board
+  says little about other RA81s. There is also nothing to gain: with offload the CPU is
+  96-97 % idle at full Wi-Fi rate, and throughput did not change with the clock
+  (743/728 vs 741 Mbit/s, client-bound). **The release stays at 1008 MHz** (patch 0007).
+- Peak 83 C is far below the 100 C passive trip and the 120 C critical trip.
+
+### Overclock variant (2026-11-12, patch 0009)
+
+One build now produces two images: `xiaomi_redmi-ax3000` (1008 MHz only, unchanged) and
+`xiaomi_redmi-ax3000-oc`, where the user picks the clock in LuCI, so there is no image
+per clock.
+
+- **DTS** `ipq5018-redmi-ax3000-oc.dts` includes the standard DTS and adds 1056, 1104,
+  1152, 1200 and 1248 MHz (L 44-52 x 24 MHz, 1.1 V) as `turbo-mode` OPPs. cpufreq-dt
+  (6.18) turns them into `CPUFREQ_BOOST_FREQ` entries: they appear in
+  `scaling_boost_frequencies`, not `scaling_available_frequencies`, and stay unused while
+  `/sys/devices/system/cpu/cpufreq/boost` is 0 (the default). Kernel boot, preinit and
+  failsafe therefore run at 1008 MHz. Writing `boost=1` raises the policy limit to the
+  highest boost point, so the limit has to be written after it. 1248 is the top step:
+  1272 failed on this unit.
+- **`luci-app-cpuclock`** (package/utils, in the OC image only, `=m` in the repository):
+  `/etc/config/cpuclock` (`main.max_freq` in kHz, default 1008000, a conffile, kept by
+  sysupgrade); `/etc/init.d/cpuclock` (START=90, procd reload trigger on `cpuclock`)
+  for a boost point switches boost on, writes `scaling_max_freq` and then selects the
+  `performance` governor; for 1008 it switches boost off and goes back to schedutil.
+  A value that is not an OPP of the board falls back to 1008. The page is System -> CPU
+  Clock: live clock/limit/boost/temperatures (5 s poll), a dropdown of the OPPs, an
+  amber warning for any clock above 1008 and a red one above 1200 MHz (this unit's
+  results).
+- **schedutil cannot use the boost points** (found on the router 2026-11-12, first image
+  of this variant, r0+38536): with boost 1 and `scaling_max_freq` 1248000, a full core
+  of load (`memt`) plus Wi-Fi downlink kept the clock at 1008 MHz for 9 min
+  (`stats/total_trans` 0); the `performance` governor went to 1248 at once. In 6.18,
+  schedutil computes the next frequency from `arch_scale_freq_ref()`, which on arm64 is
+  `capacity_freq_ref`: set from `cpuinfo.max_freq` when the policy is created
+  (`init_cpu_capacity_callback`), i.e. 1008 MHz with boost off, and never updated. It also
+  caps the utilisation at the CPU capacity (`sugov_effective_cpu_perf`), so it never asks
+  for more than 1008 MHz. That image's overclock did nothing. Fix in the init script: an
+  overclock is a fixed clock under `performance` (also what the clock tests above
+  measured: pinned clocks). The order avoids passing through 1248: governor schedutil
+  (stays at 1008) -> boost 1 -> `scaling_max_freq` -> performance; back down: boost 0
+  (drops the clock to 1008 at once) -> max -> schedutil. On the router: 1104, 1248,
+  1056, 1008, 1200, stop, start, `boost=0` (what `platform_pre_upgrade` writes: clock to
+  1008) and restart each made exactly one transition to the expected clock. The rpcd ACL
+  needed both `/sys/class/thermal/thermal_zone*/` and
+  `/sys/devices/virtual/thermal/thermal_zone*/` patterns: `ubus file read` checks the path
+  as given and its resolved target.
+- **Shared:** same compatible `xiaomi,redmi-ax3000`, so board scripts, the dual-boot and
+  sysupgrade are the same, and sysupgrade goes both ways (`SUPPORTED_DEVICES` lists only
+  `xiaomi,redmi-ax3000` and `redmi,ax3000`). `platform_pre_upgrade` writes `boost=0`
+  first, so the flash write runs at 1008 MHz (a no-op on the standard image, which has
+  no boost file).
+- **Build:** `configs/ra81.config` is now multi-profile with per-device rootfs. In that
+  mode the subtarget's default packages that the device drops (kmod-usb3/dwc3,
+  e2fsprogs, kmod-fs-ext4, losetup) are force-selected `=m`. They are built into the
+  package repository but are not installed in either image. They change the kernel
+  config (USB/ext4 modules), so the first build after the switch rebuilt the
+  out-of-tree kmods (new vermagic).
+- `tools/validate-images.sh` checks both devices: OPP list (`1008` vs `1008 1056 1104
+  1152 1200 1248`, 5 x `turbo-mode`), the cpuclock files and `S90cpuclock` only in
+  the OC rootfs, the boost-off line in `platform.sh`, and sysupgrade metadata without an
+  `-oc` compatible.
+
 ## To do next (written 2026-10-17)
 
 1. ~~**Router-role test: WAN<->LAN NAT.**~~ done, wired client 922-930 Mbit/s (see "Router role" above; PPPoE still open). Original note: The last big unmeasured item for public users
@@ -422,6 +669,31 @@ Not measured: PPPoE (no PPPoE server on the bench).
 Smaller, when convenient: 2.4 GHz AP test on the NSS path; press-test reset/mesh
 buttons; optionally `min_free_kbytes` 4096; the second CPU link (GMAC0 -> port 5 for
 WAN, plan step 3); README for the NSS line.
+
+## State left on the router (10.0.0.3) on 2026-11-12
+
+- **Slot 1** (running, confirmed: `flag_last_success=1`, `flag_boot_success=1`):
+  ipq50xx-2026.11.11 AP image with patches 0001-0008 (1008 MHz only, TSENS on),
+  `out/nss-2026.11.11-r0+38535-7641945b20-c8c05dd31-files-ap`, installed by sysupgrade
+  with config kept. **Slot 0** (fallback): the same release with 0001-0006,
+  `out/nss-2026.11.11-r0+38533-3d618d215b-c8c05dd31-files-ap` (has the 1296 MHz OPP:
+  it needs `scaling_max_freq=1008000` to be stable under load). The October image is
+  gone from the flash.
+- After the flash: four thermal zones (ubi32, cpu, top-glue, gephy) at 62-63 C idle,
+  `scaling_available_frequencies` = 1008000 only, `panic_on_oops=1` (default),
+  `nss.general.wifi_offload=1`.
+- The 1296 MHz clock test (above) reset the router at 15:43 -03. It came back from slot 1
+  (confirmed) at 1008 MHz, schedutil, `panic_on_oops=1`, 74-75 C right after the load.
+  The test-only runtime settings (`panic_on_oops=0`, NSS coredump, the `ip dbg` nft
+  table, `/tmp` tools) went away with the reboot. After the 1272 MHz RAM error it was
+  rebooted cleanly (16:57) so the 1248 run started from an uncorrupted kernel. At the
+  end (17:15) it is at 1008 MHz, schedutil, `panic_on_oops=1`, no test module loaded.
+  The `ip dbg` nft table and the `/tmp` tools are still there until the next reboot.
+- Wi-Fi: the owner's AP config, 5 GHz configured ch36 HE80 (2.4 GHz ch1). hostapd runs
+  it with primary 40 in the same 36-48 block ("Switch own primary and secondary channel
+  to get secondary channel with no Beacons from other BSSes": the neighbours use 40 as
+  primary). The uplink is in the WAN jack (bridged, `wan` on `eth1` per the AP profile).
+- **Root has no password**: set one with `passwd`.
 
 ## State left on the router (10.0.0.3) on 2026-10-18
 

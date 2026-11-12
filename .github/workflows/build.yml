@@ -206,7 +206,9 @@ jobs:
           VERSION: ${{ steps.assets.outputs.version }}
         run: |
           {
-            echo "OpenWrt $VERSION for the Xiaomi Redmi AX3000 (RA81), built from ${GITHUB_SHA::7}."
+            echo "OpenWrt $VERSION for the Xiaomi Redmi AX3000 (RA81), built from ${GITHUB_SHA::7}"
+            echo "(branch \`${GITHUB_REF_NAME}\`). Base: $(sed -n 's/^OPENWRT_URL=https:\/\/github.com\///p' patches/BASE | sed 's/\.git$//')"
+            echo "at \`$(sed -n 's/^OPENWRT_REF=//p' patches/BASE | cut -c1-10)\` with NSS offload, kernel 6.18."
             echo
             echo "Patches:"
             for p in patches/*.patch; do echo "- \`$(basename "$p")\`"; done
@@ -216,6 +218,20 @@ jobs:
             echo "| \`*-squashfs-factory.ubi\` | first install into a dual-boot slot (\`scripts/ra81-install-slot.sh\`) |"
             echo "| \`*-squashfs-sysupgrade.bin\` | upgrade from this firmware (\`sysupgrade\`) |"
             echo "| \`*-initramfs-uImage.itb\` | RAM boot via U-Boot TFTP (UART) |"
+            echo
+            echo "Two image sets:"
+            echo
+            echo "- \`xiaomi_redmi-ax3000\`: CPU at the rated 1008 MHz. **Use this one.** It is the build that"
+            echo "  was stress-tested for hours (full-rate Wi-Fi and wired load with a RAM tester, soaks,"
+            echo "  reboots, sysupgrades)."
+            echo "- \`xiaomi_redmi-ax3000-oc\`: starts at 1008 MHz and lets you pick up to 1248 MHz in LuCI"
+            echo "  (System -> CPU Clock). **Opt-in, at your own risk.** The clocks were tested on one unit"
+            echo "  only; yours may fail lower, and an unstable clock silently corrupts memory under load."
+            echo "  With NSS offload a higher clock does not raise routing or Wi-Fi throughput. Read the"
+            echo "  README's overclock section first."
+            echo
+            echo "sysupgrade works between the two. Not tested yet: PPPoE WAN, the reset/mesh buttons."
+            echo "Images ship without a root password: set one after the first boot."
             echo
             echo "Packages: \`apk update && apk add kmod-<name>\` installs the kernel modules of"
             echo "this build from its own repository, which the image already lists:"

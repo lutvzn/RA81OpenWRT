@@ -1,0 +1,130 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: lutvzn <106083845+lutvzn@users.noreply.github.com>
+Date: Wed, 11 Nov 2026 22:53:05 -0300
+Subject: [PATCH 5/9] qualcommax: ipq50xx: redmi-ax3000: use both CPU links
+
+The RA81 is wired like the CR880x: besides the SGMII link (GMAC1 ->
+QCA8337 MAC6), GMAC0's internal GE PHY faces switch PHY4 (port 5). The
+stock firmware uses it for WAN (eth0) and the SGMII link for LAN (eth1).
+
+Enable GMAC0 and switch port 5 as a second DSA CPU port and split the
+ports as on the CR880x: lan1-3 on eth1, wan on eth0. A routed flow then
+crosses each link in one direction instead of the SGMII link in both;
+on a CR8806 that lifted the bidirectional ceiling of 927-929 Mbit/s to
+1104-1458. Both links reach the NSS firmware (nss_dsa_fw_mask() arms
+every GMAC with user ports) and tag_8021q keeps a port's VLAN on its own
+CPU port.
+
+The GE PHY gets the short-cable DAC preset, which the vendor DT sets
+(phy_dac = <0x10 0x10>).
+
+A kept config with no conduit for wan leaves it on MAC6, qca8k's
+preferred CPU port, so a sysupgrade keeping its settings stays on one
+link until wan is given 'conduit eth0'.
+---
+ .../qualcommax/dts/ipq5018-redmi-ax3000.dts   | 38 ++++++++++++++++---
+ .../ipq50xx/base-files/etc/board.d/02_network |  4 +-
+ 2 files changed, 35 insertions(+), 7 deletions(-)
+
+diff --git a/target/linux/qualcommax/dts/ipq5018-redmi-ax3000.dts b/target/linux/qualcommax/dts/ipq5018-redmi-ax3000.dts
+index 5b07301ceb..20f211425a 100644
+--- a/target/linux/qualcommax/dts/ipq5018-redmi-ax3000.dts
++++ b/target/linux/qualcommax/dts/ipq5018-redmi-ax3000.dts
+@@ -209,9 +209,11 @@
+  *    |_______________________|       |_______________________|
+  *
+  * QCA8337 Phy0..Phy2 -> LAN1..LAN3, Phy3 -> WAN.
+- * Only the SGMII link (MAC1 <-> MAC6) is used, as the DSA CPU port of
+- * all four ports. The vendor firmware uses it for the LAN ports (eth1)
+- * and MAC0 <-> Phy4/MAC5 for the WAN port (eth0).
++ * Both links are DSA CPU ports, as in the vendor firmware: MAC1 <-> MAC6
++ * (SGMII, eth1) for LAN1..LAN3 and MAC0 <-> Phy4/MAC5 (PHY to PHY, eth0)
++ * for WAN, split in board.d. A routed flow then crosses each link in one
++ * direction instead of one link in both. A port without a conduit set in
++ * the network config stays on MAC6 (qca8k's preferred CPU port).
+  * ===============================================================
+  */
+ 
+@@ -222,7 +224,15 @@
+ 	assigned-clock-rates = <UNIPHY_REFCLK_25MHZ>;
+ };
+ 
+-// MAC1 ---SGMII---> QCA8337 SerDes
++// MAC0 -> GE Phy -> QCA8337 Phy4 (WAN path)
++&gmac0 {
++	status = "okay";
++
++	nvmem-cells = <&macaddr_art_0>;
++	nvmem-cell-names = "mac-address";
++};
++
++// MAC1 ---SGMII---> QCA8337 SerDes (LAN path)
+ &gmac1 {
+ 	status = "okay";
+ 
+@@ -241,6 +251,11 @@
+ 	status = "okay";
+ };
+ 
++// PCB trace to QCA8337 Phy4: the vendor DT sets phy_dac = <0x10 0x10>
++&ge_phy {
++	qcom,dac-preset-short-cable;
++};
++
+ &mdio1 {
+ 	status = "okay";
+ 
+@@ -268,7 +283,7 @@
+ 		reg = <3>;
+ 	};
+ 
+-	// QCA8337 Phy4 -> IPQ5000 GE Phy (unused)
++	// QCA8337 Phy4 -> IPQ5000 GE Phy
+ 	qca8337_4: ethernet-phy@4 {
+ 		reg = <4>;
+ 	};
+@@ -311,6 +326,19 @@
+ 				nvmem-cell-names = "mac-address";
+ 			};
+ 
++			/*
++			 * Second CPU port: switch Phy4 faces the SoC's GE Phy,
++			 * two PHYs back to back, GMAC0 behind it. The link is
++			 * opened at probe time by generic/pending 714, or Phy4
++			 * drops its 1000BASE-T advertisement after ~13 s.
++			 */
++			ethernet-port@5 {
++				reg = <5>;
++				phy-handle = <&qca8337_4>;
++				phy-mode = "gmii";
++				ethernet = <&gmac0>;
++			};
++
+ 			ethernet-port@6 {
+ 				reg = <6>;
+ 				label = "cpu";
+diff --git a/target/linux/qualcommax/ipq50xx/base-files/etc/board.d/02_network b/target/linux/qualcommax/ipq50xx/base-files/etc/board.d/02_network
+index 0fd8d36eff..783de42933 100644
+--- a/target/linux/qualcommax/ipq50xx/base-files/etc/board.d/02_network
++++ b/target/linux/qualcommax/ipq50xx/base-files/etc/board.d/02_network
+@@ -42,8 +42,7 @@ ipq50xx_setup_interfaces()
+ 	linksys,mx5500|\
+ 	linksys,spnmx56|\
+ 	mercusys,mr80x-v2|\
+-	xiaomi,ax6000|\
+-	xiaomi,redmi-ax3000)
++	xiaomi,ax6000)
+ 		ucidef_set_interfaces_lan_wan "lan1 lan2 lan3" "wan"
+ 		;;
+ 	xiaomi,mi-router-ax3000t-v2)
+@@ -65,6 +64,7 @@ ipq50xx_setup_interfaces()
+ 		ucidef_set_network_device_conduit "wan" "eth0"
+ 		;;
+ 	xiaomi,cr8806|\
++	xiaomi,redmi-ax3000|\
+ 	xiaomi,redmi-ax3000-ubootmod)
+ 		ucidef_set_interfaces_lan_wan "lan1 lan2 lan3" "wan"
+ 		ucidef_set_network_device_conduit "lan1" "eth1"
+-- 
+2.52.0
+

@@ -2,6 +2,7 @@
 # Wired iperf3 endpoint for the RA81 forwarding bench, in a network namespace.
 #   sudo sh tools/bench-netns.sh up     # macvlan on the 2.5G NIC, 10.0.0.51/23, iperf3 -s,
 #                                   # wlp2s0 onto the RA81 test AP
+#   CON=APT22 BSSID=aa:bb:cc:dd:ee:ff sudo -E sh tools/bench-netns.sh up   # another profile, pinned to one AP
 #   sudo sh tools/bench-netns.sh down   # remove everything, wlp2s0 back to APT22
 # Runtime state only: nothing survives a reboot.
 set -eu
@@ -9,6 +10,7 @@ NS=ra81s
 PARENT=enp0s20f0u6
 IP=10.0.0.51/23
 IPERF=/home/linuxbrew/.linuxbrew/bin/iperf3
+CON=${CON:-RA81-iperf}
 
 case "${1:-}" in
 up)
@@ -23,7 +25,7 @@ up)
 	sysctl -q -w net.ipv4.conf.$PARENT.arp_ignore=1
 	ip netns exec $NS $IPERF -s -D -B ${IP%/*}
 	echo "iperf3 server on ${IP%/*} in netns $NS"
-	nmcli con up RA81-iperf
+	nmcli con up "$CON" ${BSSID:+ap $BSSID}
 	;;
 down)
 	ip netns pids $NS 2>/dev/null | xargs -r kill

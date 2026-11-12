@@ -32,6 +32,20 @@ if [ -n "$brdev" ]; then
 	uci -q add_list network."$brdev".ports='wan'
 fi
 
+# NSS line: board.d puts wan on eth0 (MAC0 -> switch port 5) and lan1-3 on
+# eth1 (MAC1 -> port 6). With wan bridged into br-lan, the bridge VLAN then
+# holds both CPU ports, so the switch sends every upstream broadcast and
+# multicast up both links and br-lan forwards both copies (duplicates on
+# Wi-Fi). An AP gains nothing from the second link, so keep wan on eth1.
+# Only when board.d split the ports (/etc/board.json, written before the
+# uci-defaults run); the single-link 25.12 line has no conduit entries.
+if [ "$(jsonfilter -q -i /etc/board.json -e '@.network_device.wan.conduit')" = eth0 ]; then
+	wandev=$(uci -q show network | sed -n "s/^network\.\([^.]*\)\.name='wan'$/\1/p" | head -n1)
+	[ -n "$wandev" ] || wandev=$(uci add network device)
+	uci set network."$wandev".name='wan'
+	uci set network."$wandev".conduit='eth1'
+fi
+
 uci commit network
 uci commit dhcp
 exit 0
