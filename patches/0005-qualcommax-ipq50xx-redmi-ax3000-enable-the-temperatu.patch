@@ -1,0 +1,51 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: lutvzn <106083845+lutvzn@users.noreply.github.com>
+Date: Thu, 12 Nov 2026 18:21:54 -0300
+Subject: [PATCH 5/5] qualcommax: ipq50xx: redmi-ax3000: enable the temperature
+ sensor
+
+TSENS was disabled because the boot firmware does not turn it on and
+some zones were said to report bogus critical temperatures. The upstream
+driver enables the block itself on the IPQ5018 (init_tsens_v1_no_rpm),
+and this IPQ5000 has a two-point calibration fused (mode 3). Read on the
+board with the same enable sequence: s1-s4 (ubi32, cpu, top-glue, gephy)
+at 62-63 C idle, 68 C after 4 minutes of both cores at 100 %, back to
+64 C two minutes later; the zones agree within 1 C. Under a 15 min
+Wi-Fi load at 1008 MHz they peaked at 77 C.
+
+This gives the 120 C critical trips from ipq5018.dtsi and temperatures
+in /sys/class/thermal and hwmon. The cpu-thermal passive trip (100 C)
+has nothing to throttle with the single 1008 MHz operating point.
+---
+ .../arm64/boot/dts/qcom/ipq5018-redmi-ax3000.dts    | 13 ++++++++-----
+ 1 file changed, 8 insertions(+), 5 deletions(-)
+
+diff --git a/target/linux/qualcommax/files/arch/arm64/boot/dts/qcom/ipq5018-redmi-ax3000.dts b/target/linux/qualcommax/files/arch/arm64/boot/dts/qcom/ipq5018-redmi-ax3000.dts
+index 28d069cd5d..1d327b00c8 100644
+--- a/target/linux/qualcommax/files/arch/arm64/boot/dts/qcom/ipq5018-redmi-ax3000.dts
++++ b/target/linux/qualcommax/files/arch/arm64/boot/dts/qcom/ipq5018-redmi-ax3000.dts
+@@ -120,13 +120,16 @@
+ };
+ 
+ /*
+- * TSENS is not enabled by the boot firmware on this IPQ5000 ("tsens
+- * device is not enabled" with the vendor kernel) and some of its zones
+- * report bogus critical temperatures, which shuts the board down early
+- * in boot. Keep it off.
++ * The boot firmware leaves TSENS off ("tsens device is not enabled" with
++ * the vendor kernel), but the upstream driver turns it on itself on the
++ * IPQ5018 (no RPM). The IPQ5000 fuses hold a two-point calibration, and
++ * the zones read 62-63 C idle in the closed case and 68 C after 4 min
++ * of both cores at 100 %, all within 1 C of each other. This brings the
++ * critical shutdown trips (120 C) of ipq5018.dtsi and temperatures in
++ * /sys/class/thermal and hwmon.
+  */
+ &tsens {
+-	status = "disabled";
++	status = "okay";
+ };
+ 
+ &qpic_bam {
+-- 
+2.52.0
+

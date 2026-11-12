@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: lutvzn <106083845+lutvzn@users.noreply.github.com>
 Date: Thu, 15 Oct 2026 21:27:18 -0300
-Subject: [PATCH 3/3] qualcommax: ipq50xx: redmi-ax3000: shrink ath11k DP RX
+Subject: [PATCH 3/5] qualcommax: ipq50xx: redmi-ax3000: shrink ath11k DP RX
  rings
 
 The 256 MiB board has only ~17 MiB available once both radios have

@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: lutvzn <106083845+lutvzn@users.noreply.github.com>
 Date: Thu, 15 Oct 2026 21:27:18 -0300
-Subject: [PATCH 2/3] mac80211: ath11k: allow shrinking the DP RX rings via DT
+Subject: [PATCH 2/5] mac80211: ath11k: allow shrinking the DP RX rings via DT
 
 ath11k fills the RXDMA buffer ring (4096 entries), on rxdma1 chips also
 the monitor buffer ring (4096 entries), and 1024 monitor status buffers

@@ -8,6 +8,15 @@ Everything about the device in this file was verified against the live router
 (10.0.0.3), its full flash dump, the stock Xiaomi firmware or the U-Boot binary,
 unless marked otherwise.
 
+> **Branch `25.12-no-nss`** (was `master`). Branch names: `<OpenWrt base>-<nss|no-nss>`.
+> The release line is **`snapshot-nss`** (kuncy7/openwrt-nss-edma, OpenWrt main + NSS,
+> kernel 6.18; its AGENTS.md and `docs/nss-evaluation.md` hold the NSS work and the
+> 2026-11 stress tests). This branch is kept for reference; from the NSS line it took
+> patch 0004 (free memory before the sysupgrade flash write) and 0005 (TSENS on).
+> Not taken: min_free 8192, the second CPU link, ECM, the 1008 MHz cap (25.12 has only
+> 1008 MHz anyway) and the overclock variant (the 6.12 apss-ipq6018 clock driver has no
+> safe a53pll rate switch on IPQ5018).
+
 ## Repository layout
 
 | Path | What | In git |
@@ -177,9 +186,11 @@ fw_setenv flag_ota_reboot 0; reboot`.
   WLAN.HK.2.5, and the upstream firmware (WLAN.HK.2.7.0.1-01744, the same build the
   hzyitc QSDK firmware ran) asserts on them:
   `phyrf_bdf.c:6245 Assertion axis_value == ANTENNACHAIN_AXIS_Z failed` (seen on device).
-- **TSENS disabled**: the boot firmware does not enable it on IPQ5000 and some zones
-  report bogus critical temperatures (ImmortalWrt saw forced shutdowns). A critical
-  shutdown before preinit would defeat the rollback.
+- **TSENS on** (patch 0005, since 2026-11-12; was disabled): the boot firmware does
+  not enable it on IPQ5000 and ImmortalWrt reported bogus critical temperatures, but
+  the upstream driver enables the block itself, the fuses hold a two-point calibration
+  and the zones read 62-68 C on this unit (checked on the NSS line). The critical trip
+  is 120 C; the passive 100 C trip has nothing to throttle (one OPP).
 - **Packages**: USB and ext4/losetup defaults removed (no USB port, NAND only); LuCI added.
 - **overlay partition** (31 MiB) is left unused for now (rootfs_data lives in the slot UBI).
 
@@ -236,7 +247,9 @@ AP image wrote slot 0 and the new system confirmed itself (`flag_last_success=0`
 hardware. Wi-Fi comes up with the image's own BDFs; config (network, country BR) and
 the SSH host key were preserved. Before sysupgrade, unload ath11k
 (`wifi down; rmmod ath11k_ahb; rmmod ath11k`) — with Wi-Fi loaded only ~5 MB is
-available once the image sits in /tmp.
+available once the image sits in /tmp. Patch 0004 (2026-11-12) does this in
+`platform_pre_upgrade` (min_free 2048, rmmod in the background with a 10 s cap, drop
+caches), as on the NSS line; images without it still need the manual step.
 
 **Memory: ath11k DP ring shrinking (2026-10-16)**. ath11k fills, per radio at probe
 time, 4096 RX buffers, 4096 monitor buffers (rxdma1 chips) and 1024 monitor status
@@ -274,7 +287,7 @@ Each has `*-squashfs-factory.ubi` (first install into a slot), `*-squashfs-sysup
   untouched (compile-time wrap macro).
 - A kernel that hangs *before* preinit is retried forever by U-Boot (ota flag stays set);
   recovery then needs UART or the stock TFTP recovery.
-- No temperature reporting (TSENS disabled).
+- No CPU frequency scaling (1008 MHz only), so thermal zones can only shut down at 120 C.
 - No NSS offload (verified on device): no NSS firmware, no qca-nss-drv/ECM; `qca_nss_dp`
   is only the GMAC Ethernet driver. Wi-Fi<->Ethernet bridging and any routing run on
   the A53 cores. Software flow offloading (nftables flowtable) is available but off
@@ -314,7 +327,6 @@ To go back to the old firmware: `fw_setenv flag_last_success 0; reboot`.
 - Restore the owner's Wi-Fi (SSID/key/channel 100 HE160 from the old config) — needs OK.
 - Press-test reset/mesh buttons; long-term stability with clients; throughput.
 - Throughput test from a Wi-Fi client (iperf3) to confirm the 2048 RX ring is enough.
-- Optional: re-enable TSENS with only cpu/ubi32 zones once readings are checked.
 - Optional: use the 31 MiB `overlay` partition for rootfs_data.
 - Optional: upstream submission (BDFs to qca-wireless, device patch to openwrt).
 

@@ -7,6 +7,14 @@ The device is not supported by upstream OpenWrt. This repository adds it on top 
 official v25.12.5 tag with a small patch series. It does not contain a copy of OpenWrt:
 the build script clones OpenWrt and applies the patches.
 
+> **Branches.** This is **`25.12-no-nss`**: the stable OpenWrt 25.12.5 release, without
+> NSS hardware offload. All routing and Wi-Fi bridging run on the CPU (Wi-Fi measured at
+> about 400-470 Mbit/s, CPU-bound). The release line is
+> [`snapshot-nss`](https://github.com/lutvzn/RA81OpenWRT/tree/snapshot-nss): the same
+> device port on [kuncy7/openwrt-nss-edma](https://github.com/kuncy7/openwrt-nss-edma)
+> (OpenWrt main + NSS, kernel 6.18), with gigabit NAT and ~800 Mbit/s Wi-Fi at an idle
+> CPU. Branch names follow `<OpenWrt base>-<nss|no-nss>`.
+
 > **Only for the RA81 (label "Redmi AX3000").** Not for the AX3000T, RA82, CR880x or
 > other models. Flashing third-party firmware can brick your device; read the
 > install and recovery sections first.
@@ -23,9 +31,9 @@ Tested on one RA81 unit (2026-10).
 | Wi-Fi 2.4 GHz (IPQ5000) and 5 GHz (QCN6102), ath11k | ✅ (AP mode, both bands) |
 | LEDs (status, internet) | ✅ |
 | Buttons (reset, mesh) | ⚠️ driver bound, not press-tested |
-| NSS hardware offload | ❌ not available upstream for IPQ50xx |
-| Temperature sensor | ❌ disabled (see limitations) |
-| Wi-Fi throughput with real clients | ⚠️ not yet measured |
+| NSS hardware offload | ❌ not available upstream for IPQ50xx (see `snapshot-nss`) |
+| Temperature sensors (4 thermal zones, hwmon) | ✅ 62-68 C (checked on the NSS line) |
+| Wi-Fi throughput, 5 GHz HE80 client | ⚠️ ~390-470 Mbit/s, one CPU core saturated |
 
 Hardware: Qualcomm IPQ5000 (IPQ5018 family, 2x Cortex-A53), 256 MiB RAM, 128 MiB
 GigaDevice SPI-NAND, QCA8337 switch, QCN6102 5 GHz radio.
@@ -37,6 +45,8 @@ GigaDevice SPI-NAND, QCA8337 switch, QCN6102 5 GHz radio.
 | `0001` | Device support: device tree, image recipe, network/LED setup, Wi-Fi calibration extraction from `0:ART`, board data files, U-Boot env access, Xiaomi dual-boot sysupgrade with boot confirmation |
 | `0002` | ath11k: optional device-tree properties to shrink the host RX rings (upstream defaults unchanged) |
 | `0003` | Use them on the RA81: ~35 MB more free RAM with both radios up (~48 MB vs ~17 MB available) |
+| `0004` | Before the sysupgrade flash write: unload Wi-Fi and drop caches, so sysupgrade works with Wi-Fi up |
+| `0005` | Temperature sensor (TSENS) on |
 
 Base: `patches/BASE` (OpenWrt v25.12.5).
 
@@ -213,13 +223,17 @@ for i in $(seq 0 21); do ssh root@<router> "cat /dev/mtd$i" > mtd$i.bin; done
 ### Upgrading
 
 Copy `*-sysupgrade.bin` to `/tmp` on the router and run `sysupgrade`; it writes the
-other slot. With Wi-Fi loaded,
-free RAM is small while the image sits in `/tmp`, so unload Wi-Fi first:
+other slot. From images with patch 0004 on, the firmware unloads Wi-Fi and drops caches
+itself before the flash write. Upgrading *from* an older image of this branch (without
+0004), or when memory is tight even for the upload, unload Wi-Fi first:
 
 ```sh
 wifi down; rmmod ath11k_ahb; rmmod ath11k; sync; echo 3 > /proc/sys/vm/drop_caches
 sysupgrade /tmp/sysupgrade.bin
 ```
+
+An image of the `snapshot-nss` branch can be installed the same way (same board name,
+both directions).
 
 ## Recovery
 
@@ -234,9 +248,10 @@ sysupgrade /tmp/sysupgrade.bin
 ## Known limitations
 
 - **No NSS offload.** All Wi-Fi/Ethernet bridging and routing run on the CPU.
-- **Temperature sensor (TSENS) disabled.** The boot firmware does not enable it on the
-  IPQ5000 and some zones report bogus critical values. That would shut the board down
-  early in boot, before rollback protection is armed.
+- **No CPU frequency scaling.** The CPU runs at its rated 1008 MHz only (upstream has
+  no other operating point for the IPQ5000), so the 100 C passive thermal trip has
+  nothing to throttle; the 120 C critical trip shuts the board down. The NSS line's load
+  tests at 1008 MHz peaked at 77 C.
 - **256 MiB RAM.** Wi-Fi uses the low-memory firmware mode (max 8 interfaces / 128
   clients per radio) and smaller RX rings (patch 0003). Monitor/sniffer mode is
   effectively unusable.
@@ -281,7 +296,7 @@ their repositories are included here.
 - **[kmiit/Redmi_AX3000_immortalwrt](https://github.com/kmiit/Redmi_AX3000_immortalwrt)**
   (ImmortalWrt port, incl. a 25.12 branch): used as a reference and comparison for the
   device tree, the Q6 boot arguments (PCIe1, PD 2, GPIO 27), the ath11k memory-mode-2
-  addresses and the report of bogus thermal readings on IPQ5000. We deliberately
+  addresses and the report of bogus thermal readings on IPQ5000 (not reproduced on this unit). We deliberately
   differ in a few places: CPU port 6 instead of 0, U-Boot env size 0x10000 (CRC-verified)
   instead of 0x40000, board data keyed by variant, and boot confirmation.
 - **[openwrt-xiaomi/xmir-patcher](https://github.com/openwrt-xiaomi/xmir-patcher)**:

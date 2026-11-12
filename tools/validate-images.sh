@@ -77,7 +77,7 @@ check "smem partitions with 0:art node" "grep -q 'label = \"0:art\"' '$WORK/boar
 check "NAND ECC strength 8" "grep -q 'nand-ecc-strength = <0x08>' '$WORK/board.dts'"
 check "tz reserved 4 MiB" "grep -A1 'tz@4ac00000' '$WORK/board.dts' | grep -q '0x4ac00000 0x00 0x400000'"
 check "q6 region 48 MiB" "grep -A1 'wcss@4b000000' '$WORK/board.dts' | grep -q '0x4b000000 0x00 0x3000000'"
-check "tsens disabled" "awk '/thermal-sensor@4a9000/,/};/' '$WORK/board.dts' | grep -q 'status = \"disabled\"'"
+check "tsens enabled (patch 0005)" "awk '/thermal-sensor@4a9000/,/};/' '$WORK/board.dts' | grep -q 'status = \"okay\"'"
 check "wifi calibration variant" "[ \$(grep -c 'qcom,ath11k-calibration-variant = \"Xiaomi-Redmi-AX3000\"' '$WORK/board.dts') -eq 2 ]"
 check "ath11k fw memory mode 2 (x2)" "[ \$(grep -c 'qcom,ath11k-fw-memory-mode = <0x02>' '$WORK/board.dts') -eq 2 ]"
 check "qca8337 cpu port@6 sgmii" "awk '/ethernet-switch@17/,0' '$WORK/board.dts' | grep -A3 'port@6' | grep -q 'sgmii'"
