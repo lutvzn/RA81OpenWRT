@@ -634,7 +634,13 @@ per clock.
      failed on `ccache --show-stats`: ccache had never been on, locally or in CI,
      because `CONFIG_CCACHE` has a prompt only `if DEVEL` and defconfig dropped it.
      `build.sh` now adds `CONFIG_DEVEL=y` (it only makes developer options visible;
-     the resolved config differs in nothing else that is built). Also fixed: the `build/openwrt` paths in the
+     the resolved config differs in nothing else that is built). Run 43343730923
+     (2026-11-13, no release, 60 min) passed: both image sets validated, dual-boot
+     scenarios pass, 232 MiB ccache saved for the next run. Its repository, served over
+     HTTP to the router and checked with only the key from the CI image
+     (`--keys-dir`), updates (238 packages) and lists `kmod-wireguard`/`luci-app-nss`;
+     with the router's own build key it is rejected (untrusted signature), as it
+     should be. Also fixed: the `build/openwrt` paths in the
      workflow, `validate-images.sh` and `test-dualboot.sh` (they now read `SRC` from
      `patches/BASE`).
    - **Boot crash on the way (2026-10-17/18):** the first image with the `=m` list

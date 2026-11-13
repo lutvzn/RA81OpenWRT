@@ -96,7 +96,7 @@ jobs:
           tools/test-dualboot.sh
           # Informational only: must not fail a build that passed.
           ccache=$(sed -n 's/^SRC=//p' patches/BASE)/staging_dir/host/bin/ccache
-          [ ! -x "$ccache" ] || "$ccache" --show-stats || true
+          [ ! -x "$ccache" ] || CCACHE_DIR=$PWD/build/ccache "$ccache" --show-stats || true
 
       # What the build saw, for failures in the host tools (e.g. a tool that is
       # installed but does not run).
