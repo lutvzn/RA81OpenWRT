@@ -80,6 +80,9 @@ fi
 # OpenWrt host tools misbehave with very new Pythons from Homebrew & co.;
 # prefer the distribution's tools.
 export PATH=/usr/lib64/ccache:/usr/bin:/usr/sbin:/bin:$PATH
+# gnulib's maint.mk (autoconf's GNUmakefile) turns an environment RELEASE into
+# the version of the staged autoconf, and tools/libtool then fails.
+unset RELEASE
 
 if [ ! -d "$SRC/.git" ] && [ ! -f "$SRC/.git" ]; then
 	git clone "$OPENWRT_URL" "$SRC"

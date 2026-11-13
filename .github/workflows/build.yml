@@ -81,13 +81,16 @@ jobs:
 
       # Only the generic image: overlays such as configs/files-ap are for local builds.
       - name: Build and validate
+        # Not RELEASE: gnulib's maint.mk (included by autoconf's GNUmakefile) turns
+        # an environment RELEASE into VERSION, and tools/libtool then fails on
+        # "autoconf (GNU Autoconf) false".
         env:
-          RELEASE: ${{ inputs.release }}
+          PUBLISH: ${{ inputs.release }}
           TAG: ${{ steps.tag.outputs.tag }}
         run: |
           # Without a release nothing is published, so the image lists no repository.
           repo=()
-          [ "$RELEASE" != true ] || repo=(--repo "$PAGES_BASE/$TAG")
+          [ "$PUBLISH" != true ] || repo=(--repo "$PAGES_BASE/$TAG")
           scripts/build.sh -j "$(nproc)" "${repo[@]}"
           tools/validate-images.sh
           tools/test-dualboot.sh
