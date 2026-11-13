@@ -305,7 +305,7 @@ After a reboot: `wan@eth1`, fw_mask 0x2, eth0 rx +0, no dropped-frame warnings.
 Wi-Fi (ch36 HE80) unchanged: dl4 826 / ul4 767 Mbit/s at 97 % idle (split: dl4 775
 / ul4 806). The router role keeps the split. Generic images with a bridged WAN, and
 the fork's other split boards (AX5400, Cudy P5, PZ-L8, CR880x), have the same issue,
-so it should be reported upstream.
+so it should be reported upstream (drafted in `issue.md`, not posted yet).
 
 It is the fork's bug, not ours: patches 0001-0006 change no kernel code (the DTS,
 board.d, base-files, one config symbol), and the fork's own `xiaomi,redmi-ax3000-ubootmod`
@@ -359,8 +359,9 @@ MHz at 1.1 V. Runtime A/B on the same image:
 f2 rules out the PLL relock/GPLL0 detour of 0973/0975: the clock was not changing.
 NSS forwards the traffic, so the cap costs no throughput. Patch 0007 deletes the 1296
 MHz operating point from the RA81 DTS (one OPP, 1008 MHz, as in the October
-release). The fork's `xiaomi,redmi-ax3000-ubootmod` is the same IPQ5000 board; report
-drafted in `issue-crash.md` (not posted).
+release). The fork's `xiaomi,redmi-ax3000-ubootmod` is the same IPQ5000 board; reported
+as [kuncy7/openwrt-nss-edma#78](https://github.com/kuncy7/openwrt-nss-edma/issues/78)
+(2026-11-12).
 
 **Smaller findings:**
 - **Downlink saturates the NSS Wi-Fi TX descriptor pool** (`tx_desc_alloc_fail`
@@ -516,14 +517,39 @@ per clock.
 - **Shared:** same compatible `xiaomi,redmi-ax3000`, so board scripts, the dual-boot and
   sysupgrade are the same, and sysupgrade goes both ways (`SUPPORTED_DEVICES` lists only
   `xiaomi,redmi-ax3000` and `redmi,ax3000`). `platform_pre_upgrade` writes `boost=0`
-  first, so the flash write runs at 1008 MHz (a no-op on the standard image, which has
-  no boost file).
+  first, so the flash write runs at 1008 MHz (a no-op on the standard image: 6.18 creates
+  the `boost` file there too, but it has no boost frequencies).
 - **Build:** `configs/ra81.config` is now multi-profile with per-device rootfs. In that
   mode the subtarget's default packages that the device drops (kmod-usb3/dwc3,
   e2fsprogs, kmod-fs-ext4, losetup) are force-selected `=m`. They are built into the
   package repository but are not installed in either image. They change the kernel
   config (USB/ext4 modules), so the first build after the switch rebuilt the
   out-of-tree kmods (new vermagic).
+- **Clocks through this path under load** (2026-11-12, the fixed init script on the
+  router, OC image r0+38536): each run is Wi-Fi downlink 4 streams (~730 Mbit/s) plus
+  `memt` (24 MB RAM tester) on one core, the clock set with `cpuclock` (performance
+  governor); "switch" also toggles `scaling_max_freq` 1008 <-> the clock every 3 s so the
+  PLL relocks under load.
+
+  | Clock | Mode | Time | memt passes | Errors | Kernel faults | Max temp |
+  |---|---|---|---|---|---|---|
+  | 1248 | steady | 600 s | 1218 | 0 | 0 | 81 C |
+  | 1248 | switch | 600 s | 1145 | 0 | 0 | 83 C |
+  | 1200 | switch | 900 s (298 toggles) | 1679 | 0 | 0 | 85 C |
+  | 1152 | switch | 600 s (199 toggles) | 1090 | 0 | 0 | 81 C |
+  | 1056 | switch | 600 s (199 toggles) | 1029 | 0 | 0 | 82 C |
+
+  The 1152/1056 runs were on the rebuilt OC image (r0+38536-8266bec00d, the governor fix
+  in the package, not hand-copied). Wi-Fi downlink 728-745 Mbit/s in every run.
+- **Release checks on the rebuilt images** (2026-11-12, `out/nss-2026.11.11-r0+38536-8266bec00d-cf8c2b597-files-ap`):
+  sysupgrade old OC (slot 0) -> standard (slot 1) -> OC (slot 0) -> standard (slot 1),
+  config kept, each boot confirmed by the dual-boot script, both radios up. The standard
+  image soaked 30 min (Wi-Fi downlink 728 Mbit/s + `memt` 24 MB: 2998 passes, 0 errors,
+  0 kernel faults, max 84 C). On the OC image a `uci set`/`commit` through rpcd (what the
+  LuCI page does) switched to 1200 MHz performance at once, and after a reboot cpuclock
+  restored 1200 MHz with one transition. The last sysupgrade started from 1200 MHz
+  (boost 1, performance). The `cpuclock` section stays in the kept config on the standard
+  image (no package reads it) and comes back if the OC image is installed again.
 - `tools/validate-images.sh` checks both devices: OPP list (`1008` vs `1008 1056 1104
   1152 1200 1248`, 5 x `turbo-mode`), the cpuclock files and `S90cpuclock` only in
   the OC rootfs, the boost-off line in `platform.sh`, and sysupgrade metadata without an
@@ -600,7 +626,11 @@ per clock.
      https://<owner>.github.io/<repo>/<tag>`; job `pages` pushes `packages/` to
      gh-pages `<tag>/` (one orphan commit, newest 10 kept, `index.md`); the release
      waits for it. Needs GitHub Pages enabled on the gh-pages branch (repository
-     settings) once the branch exists. Also fixed: the `build/openwrt` paths in the
+     settings) once the branch exists. The first three CI runs failed in
+     tools/libtool ("autoconf (GNU Autoconf) false"): gnulib's `maint.mk`, which
+     autoconf's GNUmakefile includes, turns an environment `RELEASE` into the staged
+     autoconf's `VERSION`. The workflow now passes `PUBLISH`, and `build.sh` unsets
+     `RELEASE` (2026-11-12). Also fixed: the `build/openwrt` paths in the
      workflow, `validate-images.sh` and `test-dualboot.sh` (they now read `SRC` from
      `patches/BASE`).
    - **Boot crash on the way (2026-10-17/18):** the first image with the `=m` list
@@ -672,28 +702,21 @@ WAN, plan step 3); README for the NSS line.
 
 ## State left on the router (10.0.0.3) on 2026-11-12
 
-- **Slot 1** (running, confirmed: `flag_last_success=1`, `flag_boot_success=1`):
-  ipq50xx-2026.11.11 AP image with patches 0001-0008 (1008 MHz only, TSENS on),
-  `out/nss-2026.11.11-r0+38535-7641945b20-c8c05dd31-files-ap`, installed by sysupgrade
-  with config kept. **Slot 0** (fallback): the same release with 0001-0006,
-  `out/nss-2026.11.11-r0+38533-3d618d215b-c8c05dd31-files-ap` (has the 1296 MHz OPP:
-  it needs `scaling_max_freq=1008000` to be stable under load). The October image is
-  gone from the flash.
-- After the flash: four thermal zones (ubi32, cpu, top-glue, gephy) at 62-63 C idle,
-  `scaling_available_frequencies` = 1008000 only, `panic_on_oops=1` (default),
-  `nss.general.wifi_offload=1`.
-- The 1296 MHz clock test (above) reset the router at 15:43 -03. It came back from slot 1
-  (confirmed) at 1008 MHz, schedutil, `panic_on_oops=1`, 74-75 C right after the load.
-  The test-only runtime settings (`panic_on_oops=0`, NSS coredump, the `ip dbg` nft
-  table, `/tmp` tools) went away with the reboot. After the 1272 MHz RAM error it was
-  rebooted cleanly (16:57) so the 1248 run started from an uncorrupted kernel. At the
-  end (17:15) it is at 1008 MHz, schedutil, `panic_on_oops=1`, no test module loaded.
-  The `ip dbg` nft table and the `/tmp` tools are still there until the next reboot.
-- Wi-Fi: the owner's AP config, 5 GHz configured ch36 HE80 (2.4 GHz ch1). hostapd runs
-  it with primary 40 in the same 36-48 block ("Switch own primary and secondary channel
-  to get secondary channel with no Beacons from other BSSes": the neighbours use 40 as
-  primary). The uplink is in the WAN jack (bridged, `wan` on `eth1` per the AP profile).
+- **Slot 1** (running, confirmed: `flag_last_success=1`, `flag_boot_success=1`): the
+  release candidate, standard image (1008 MHz, schedutil, no boost frequencies),
+  `out/nss-2026.11.11-r0+38536-8266bec00d-cf8c2b597-files-ap`, AP profile, installed by
+  sysupgrade from the OC image at 1200 MHz with config kept. **Slot 0** (fallback): the
+  OC image of the same build. Older images (r0+38535 standard, r0+38533 with the 1296
+  MHz OPP, the first OC image without the governor fix) are gone from the flash.
+- Kept config: `/etc/config/cpuclock` with `max_freq` 1200000 (unused on the standard
+  image; the OC image would apply it). Four thermal zones at 73-75 C idle,
+  `panic_on_oops=1`, `nss.general.wifi_offload=1`, only the `inet fw4` nft table, no test
+  tools in `/tmp` (all runtime test state went with the sysupgrade).
+- Wi-Fi: the owner's AP config, 5 GHz ch36 HE80, 2.4 GHz ch1. The uplink is in the WAN
+  jack (bridged, `wan` on `eth1` per the AP profile).
 - **Root has no password**: set one with `passwd`.
+- Host side: the bench namespace from `tools/bench-netns.sh up` is still up (wlp2s0
+  pinned to the RA81 5 GHz BSSID); `sudo sh tools/bench-netns.sh down` removes it.
 
 ## State left on the router (10.0.0.3) on 2026-10-18
 
