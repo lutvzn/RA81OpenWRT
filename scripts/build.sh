@@ -163,7 +163,10 @@ fi
 cp "$TOP/configs/ra81.config" .config
 if [ "${USE_CCACHE:-1}" = 1 ]; then
 	# OpenWrt builds its own ccache; no host ccache package is required.
-	printf '\nCONFIG_CCACHE=y\nCONFIG_CCACHE_DIR="%s"\n' "$CCACHE_DIR" >> .config
+	# CONFIG_CCACHE has a prompt only "if DEVEL": without CONFIG_DEVEL=y,
+	# defconfig drops it silently. DEVEL itself only shows developer options
+	# (their defaults are unchanged).
+	printf '\nCONFIG_DEVEL=y\nCONFIG_CCACHE=y\nCONFIG_CCACHE_DIR="%s"\n' "$CCACHE_DIR" >> .config
 fi
 make defconfig
 

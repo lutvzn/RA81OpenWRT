@@ -630,7 +630,11 @@ per clock.
      tools/libtool ("autoconf (GNU Autoconf) false"): gnulib's `maint.mk`, which
      autoconf's GNUmakefile includes, turns an environment `RELEASE` into the staged
      autoconf's `VERSION`. The workflow now passes `PUBLISH`, and `build.sh` unsets
-     `RELEASE` (2026-11-12). Also fixed: the `build/openwrt` paths in the
+     `RELEASE` (2026-11-12). The fourth run built and validated both image sets, then
+     failed on `ccache --show-stats`: ccache had never been on, locally or in CI,
+     because `CONFIG_CCACHE` has a prompt only `if DEVEL` and defconfig dropped it.
+     `build.sh` now adds `CONFIG_DEVEL=y` (it only makes developer options visible;
+     the resolved config differs in nothing else that is built). Also fixed: the `build/openwrt` paths in the
      workflow, `validate-images.sh` and `test-dualboot.sh` (they now read `SRC` from
      `patches/BASE`).
    - **Boot crash on the way (2026-10-17/18):** the first image with the `=m` list

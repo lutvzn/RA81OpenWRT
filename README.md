@@ -143,7 +143,7 @@ SRC=/path/to/tree DL_DIR=/path/to/dl scripts/build.sh   # other source / downloa
 `configs/ra81.config` selects the two devices, LuCI, the NSS packages and the initramfs
 image. Edit it to add packages. Each build copies it to `.config` in the tree, so
 changes made with `make menuconfig` in the tree are overwritten: save them back with
-`./scripts/diffconfig.sh` (drop the `CONFIG_CCACHE*` lines the build script adds).
+`./scripts/diffconfig.sh` (drop the `CONFIG_DEVEL`/`CONFIG_CCACHE*` lines the build script adds).
 Packages selected `=m` are not in the images but in the package repository.
 
 ### Faster repeat builds
