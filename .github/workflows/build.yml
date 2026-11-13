@@ -145,6 +145,12 @@ jobs:
           {
             echo "OpenWrt $VERSION for the Xiaomi Redmi AX3000 (RA81), built from ${GITHUB_SHA::7}."
             echo
+            echo "**No-NSS build on the stable OpenWrt 25.12 release (kernel 6.12), branch \`25.12-no-nss\`.**"
+            echo "Ethernet and Wi-Fi traffic runs on the CPU (Wi-Fi about 400-470 Mbit/s). The recommended"
+            echo "image is the latest \`ra81-nss-*\` release (NSS offload, OpenWrt snapshot + kuncy7 fork)."
+            echo "Packages from the official 25.12 feeds install; kernel modules (kmods) do not, since this"
+            echo "build has its own kernel and no package repository of its own."
+            echo
             echo "Patches:"
             for p in patches/*.patch; do echo "- \`$(basename "$p")\`"; done
             echo
@@ -166,4 +172,5 @@ jobs:
           gh release create "$TAG" release/* \
             --target "$GITHUB_SHA" \
             --title "RA81 OpenWrt $VERSION (build ${{ github.run_number }})" \
-            --notes-file notes.md
+            --notes-file notes.md \
+            --latest=false
