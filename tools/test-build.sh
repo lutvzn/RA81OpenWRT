@@ -61,6 +61,7 @@ expect_updates() {
 }
 run
 expect_updates 1
+grep -q '^CONFIG_DEVEL=y$' .config
 grep -q '^CONFIG_CCACHE=y$' .config
 grep -q "CONFIG_CCACHE_DIR=\"$WORK/build/ccache\"" .config
 [ -s "$WORK/out/v25.12.5-test/sha256sums" ]
