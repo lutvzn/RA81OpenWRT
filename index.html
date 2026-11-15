@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RA81 OpenWrt package repositories</title>
+<style>
+body { font: 16px/1.5 system-ui, sans-serif; max-width: 46rem; margin: 2rem auto; padding: 0 1rem; color: #1f2328; background: #fff; }
+code { font-size: 0.9em; background: #f0f2f4; padding: 0.1em 0.3em; border-radius: 4px; }
+a { color: #0969da; }
+@media (prefers-color-scheme: dark) {
+  body { color: #e6edf3; background: #0d1117; }
+  code { background: #262c36; }
+  a { color: #4493f8; }
+}
+</style>
+</head>
+<body>
+<h1>RA81 OpenWrt package repositories</h1>
+<p>Package repositories of the <a href="https://github.com/lutvzn/RA81OpenWRT">lutvzn/RA81OpenWRT</a> firmware
+for the Xiaomi Redmi AX3000 (RA81): the kernel modules and other packages of each
+release. They only install on an image of the same release, which already lists its
+repository in <code>/etc/apk/repositories.d/distfeeds.list</code>, so
+<code>apk update &amp;&amp; apk add kmod-&lt;name&gt;</code> is all that is needed.</p>
+<p>Firmware downloads: <a href="https://github.com/lutvzn/RA81OpenWRT/releases/latest">latest release</a>.</p>
+<ul>
+<li><a href="ra81-nss-2026.11.11-run11/packages.adb">ra81-nss-2026.11.11-run11</a> (<a href="https://github.com/lutvzn/RA81OpenWRT/releases/tag/ra81-nss-2026.11.11-run11">release</a>)</li>
+<li><a href="ra81-nss-2026.11.11-run6/packages.adb">ra81-nss-2026.11.11-run6</a></li>
+</ul>
+</body>
+</html>
