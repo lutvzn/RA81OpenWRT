@@ -58,6 +58,7 @@ unless marked otherwise.
 | `firmware/bdf/` | the repacked `board-2.bin` files + provenance (`firmware/bdf/README.md`) | yes |
 | `tools/bd-*.py` | board-2.bin list/extract/encode (encoder is byte-identical to ath11k-bdencoder) | yes |
 | `tools/uboot-xref.py` | Thumb-2 disassembly around string xrefs in the U-Boot ELF | yes |
+| `tools/pages-index.sh` | `index.html` of the gh-pages package repositories (CI) | yes |
 | `tools/validate-images.sh` | static checks of the outputs (UBI volumes, FIT config/arch, DTB, rootfs, sysupgrade tar) | yes |
 | `.github/workflows/build.yml` | manual GitHub Actions build (generic image only), validates, uploads `out/`, publishes the release and its package repository (gh-pages) | yes |
 | `tools/test-dualboot.sh` | runs the shipped dual-boot library against a modelled U-Boot (7 scenarios) | yes |

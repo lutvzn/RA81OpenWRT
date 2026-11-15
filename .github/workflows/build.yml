@@ -129,6 +129,12 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       TAG: ${{ needs.build.outputs.tag }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          path: src
+          sparse-checkout: tools/pages-index.sh
+          sparse-checkout-cone-mode: false
+
       - name: Download images
         uses: actions/download-artifact@v4
         with:
@@ -155,17 +161,11 @@ jobs:
           by_run() { for d in ra81-*-run*; do [ -d "$d" ] || continue; echo "${d##*-run} $d"; done | sort -n | cut -d' ' -f2; }
           by_run | head -n -"$KEEP" | xargs -r rm -rf --
           touch .nojekyll
-          {
-            echo "# RA81 OpenWrt package repositories"
-            echo
-            echo "One directory per release of \`${GITHUB_REPOSITORY}\`: the kernel modules and"
-            echo "other packages of that build. They only install on an image of the same"
-            echo "release, which lists its directory in \`/etc/apk/repositories.d/distfeeds.list\`."
-            echo
-            for d in $(by_run | tac); do
-              echo "- [${d}](${d}/packages.adb), [release](https://github.com/${GITHUB_REPOSITORY}/releases/tag/${d})"
-            done
-          } > index.md
+          # index.html (served as is; .nojekyll means an index.md would not be rendered).
+          # Release links only for tags that have a release; this run's is published next.
+          releases=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/releases" -q '.[].tag_name')
+          # shellcheck disable=SC2086 # one argument per tag
+          sh ../src/tools/pages-index.sh . "$GITHUB_REPOSITORY" "$TAG" $releases
           git add -A
           # One commit, no history: old repositories are not kept in the branch.
           git checkout -q --orphan gh-pages-new

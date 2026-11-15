@@ -624,7 +624,7 @@ per clock.
    - CI (`.github/workflows/build.yml`): tag `ra81-<label>-run<N>` fixed before the
      build; with `release`, the image gets `--repo
      https://<owner>.github.io/<repo>/<tag>`; job `pages` pushes `packages/` to
-     gh-pages `<tag>/` (one orphan commit, newest 10 kept, `index.md`); the release
+     gh-pages `<tag>/` (one orphan commit, newest 10 kept, `index.html` from `tools/pages-index.sh`); the release
      waits for it. Needs GitHub Pages enabled on the gh-pages branch (repository
      settings) once the branch exists. The first three CI runs failed in
      tools/libtool ("autoconf (GNU Autoconf) false"): gnulib's `maint.mk`, which
