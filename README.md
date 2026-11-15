@@ -22,6 +22,22 @@ script clones the base and applies the patches.
 > other models. Flashing third-party firmware can brick your device; read the
 > install and recovery sections first.
 
+## Download
+
+Get the images from the **[latest release](https://github.com/lutvzn/RA81OpenWRT/releases/latest)**.
+It is always the NSS build from this branch. Releases named `v25.12.5-…` are builds of
+the `25.12-no-nss` reference branch: slower (no NSS) and without a package repository.
+
+Which file to use (standard image, see [Images](#images-standard-and-overclock)):
+
+| File | Use |
+|---|---|
+| `…-xiaomi_redmi-ax3000-squashfs-factory.ubi` | first install into a dual-boot slot ([Installing](#installing)) |
+| `…-xiaomi_redmi-ax3000-squashfs-sysupgrade.bin` | upgrade from an earlier build of this firmware ([Upgrading](#upgrading)) |
+| `…-xiaomi_redmi-ax3000-initramfs-uImage.itb` | RAM boot over TFTP from U-Boot (UART only) |
+
+Check the files against the release's `sha256sums`.
+
 ## Status
 
 Tested on one RA81 unit (2026-10 to 2026-11), as an access point and as a router.
@@ -37,7 +53,7 @@ Tested on one RA81 unit (2026-10 to 2026-11), as an access point and as a router
 | Wi-Fi 5 GHz HE80, one 2x2 client | ✅ ~750-830 Mbit/s down, ~660-770 up, CPU ~97 % idle |
 | Temperature sensors (4 thermal zones, hwmon) | ✅ 62-64 C idle, 77 C under full load |
 | LEDs (status, internet) | ✅ |
-| Kernel module repository (`apk add kmod-…`) per release | ✅ locally; published by CI |
+| Kernel module repository (`apk add kmod-…`) per release | ✅ published by CI, `apk update` tested on the router |
 | Buttons (reset, mesh) | ⚠️ driver bound, not press-tested |
 | PPPoE WAN | ⚠️ not tested (should be offloaded by the NSS PPPoE manager) |
 
@@ -339,6 +355,10 @@ works with a copy of `packages/` on the router.
   unusable.
 - **Set your country** in the Wi-Fi config: the board data and calibration are
   region-neutral.
+- **WPA3 compatibility mode** (`encryption sae-compat`) exists only in OpenWrt main,
+  so it works on this firmware but not on the `25.12-no-nss` images: there hostapd
+  rejects it and the radio stays down. Use `sae-mixed` (WPA2/WPA3) there, and before
+  going back from this firmware to a 25.12 image with the config kept.
 - Only the RA81 with the stock bootloader is supported. CR880x variants (e.g. M79 with
   board ID 0x10) would need their own device tree / board data; the fork has its own
   `xiaomi,redmi-ax3000-ubootmod` for a modified bootloader.
